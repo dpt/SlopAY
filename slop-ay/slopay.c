@@ -13,11 +13,11 @@
 #include <limits.h>
 #include <math.h>
 
-#include "slopay_loader.h"
-#include "slopay_z80.h"
-#include "slopay_chip.h"
-#include "slopay_target_macos.h"
-#include "slopay_target_wave.h"
+#include "slopay-loader.h"
+#include "slopay-z80.h"
+#include "slopay-chip.h"
+#include "slopay-target-macos.h"
+#include "slopay-target-wave.h"
 
 #define AY_BOOT_ADDR          (0x0000)
 #define AY_ISR_ADDR           (0x0038)

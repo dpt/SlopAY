@@ -6,11 +6,11 @@
 - `ProjectAY/` is the local corpus of demo/game `.ay` files for manual regression checks.
 
 ## Architecture You Need First
-- **Loader layer:** `slop-ay/slopay_loader.c` parses AY files (big-endian fields + signed relative offsets) into `slopay_loader_file_t` and `slopay_loader_song_t` (`lib/slopay_loader.h`).
+- **Loader layer:** `slop-ay/slopay-loader.c` parses AY files (big-endian fields + signed relative offsets) into `slopay_loader_file_t` and `slopay_loader_song_t` (`slop-ay/slopay-loader.h`).
 - **Playback core:** `slop-ay/slopay.c` builds Player v3 memory (`slopay_build_player_v3_memory`), loads song blocks (`slopay_load_song_blocks`), seeds Z80 regs, then drives execution.
 - **CPU/audio bridge:** Z80 port callbacks in `slop-ay/slopay.c` map OUT traffic to AY register select/data writes and beeper state; this is the key cross-component contract.
-- **Sound generation:** `lib/slopay_chip.c` exposes register-driven synthesis (`slopay_chip_write_register`, `slopay_chip_get_sample`) with fixed-point timing and stereo mixing.
-- **Output drivers:** `lib/slopay_target_macos.c` handles real-time Core Audio callback output; `slop-ay/slopay_target_wave.c` reuses the same render callback for offline WAV encoding.
+- **Sound generation:** `lib/slopay-chip.c` exposes register-driven synthesis (`slopay_chip_write_register`, `slopay_chip_get_sample`) with fixed-point timing and stereo mixing.
+- **Output drivers:** `lib/slopay-target-macos.c` handles real-time Core Audio callback output; `slop-ay/slopay-target-wave.c` reuses the same render callback for offline WAV encoding.
 
 ## Critical Data/Timing Rules
 - AY format parsing follows `ay-format.md`: Motorola order (big-endian), 16-bit signed relative pointers, block terminator at `address == 0`.
@@ -31,7 +31,7 @@
 - Z80 opcode coverage gaps are surfaced at runtime via `slopay_z80_missing_opcode_snapshot` and printed summaries in `slopay_dump_missing_opcodes`.
 
 ## Code Patterns and Conventions
-- Keep parsing helpers explicit and local (`read_be16`, `read_be16_signed`, `rel_ptr` in `slop-ay/slopay_loader.c`); avoid hidden endian/pointer magic.
+- Keep parsing helpers explicit and local (`read_be16`, `read_be16_signed`, `rel_ptr` in `slop-ay/slopay-loader.c`); avoid hidden endian/pointer magic.
 - New audio outputs should follow existing driver pattern: callback signature compatible with `render_audio` and lifecycle `init/start/stop/cleanup`.
 - Port-decoding logic is mask-based (`slopay_is_register_port`, `slopay_is_data_port`) and should stay centralized to avoid behavioral drift.
 - This project favors C99 + simple structs over deep abstraction; preserve directness unless a change truly crosses module boundaries.

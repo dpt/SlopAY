@@ -12,8 +12,8 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreMIDI/CoreMIDI.h>
 
-#include "slopay_chip.h"
-#include "slopay_target_macos.h"
+#include "slopay-chip.h"
+#include "slopay-target-macos.h"
 #include "polyblep.h"
 #include "reverb.h"
 

@@ -1,4 +1,4 @@
-/* slopay_target_wave.h
+/* slopay-target-wave.h
  *
  * WAV file output driver for AY player
  */
@@ -31,3 +31,4 @@ int slopay_target_wave_render_all(slopay_target_wave_t *driver, uint32_t total_s
 void slopay_target_wave_cleanup(slopay_target_wave_t *driver);
 
 #endif /* SLOPAY_TARGET_WAVE_H */
+

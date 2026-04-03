@@ -1,4 +1,4 @@
-/* slopay_z80.h
+/* slopay-z80.h
  *
  * Z80 CPU emulator
  */
@@ -80,3 +80,4 @@ void slopay_z80_set_port_callbacks(slopay_z80_t *cpu,
                                    void *ctx);
 
 #endif /* SLOPAY_Z80_H */
+

@@ -1,9 +1,9 @@
-/* slopay_target_macos.c
+/* slopay-target-macos.c
  *
  * macOS audio driver implementation using Core Audio
  */
 
-#include "slopay_target_macos.h"
+#include "slopay-target-macos.h"
 
 #include <stdio.h>
 
@@ -141,3 +141,5 @@ void slopay_target_macos_cleanup(slopay_target_macos_t *driver)
   driver->render   = NULL;
   driver->userdata = NULL;
 }
+
+

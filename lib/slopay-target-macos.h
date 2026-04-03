@@ -1,4 +1,4 @@
-/* slopay_target_macos.h
+/* slopay-target-macos.h
  *
  * macOS audio driver implementation using Core Audio
  */
@@ -27,3 +27,4 @@ OSStatus slopay_target_macos_stop(const slopay_target_macos_t *driver);
 void slopay_target_macos_cleanup(slopay_target_macos_t *driver);
 
 #endif /* SLOPAY_TARGET_MACOS_H */
+

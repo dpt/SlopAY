@@ -1,4 +1,4 @@
-/* slopay_target_wave.c
+/* slopay-target-wave.c
  *
  * WAV file output driver for AY player
  *
@@ -10,7 +10,7 @@
  * the WAV format requirement.
  */
 
-#include "slopay_target_wave.h"
+#include "slopay-target-wave.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -190,5 +190,7 @@ void slopay_target_wave_cleanup(slopay_target_wave_t *driver)
   fclose(driver->file);
   driver->file = NULL;
 }
+
+
 
 

@@ -1,4 +1,4 @@
-/* slopay_chip.c
+/* slopay-chip.c
 *
  * AY-3-8912 sound chip emulator
  *
@@ -15,7 +15,7 @@
 
 #include <stdint.h>
 
-#include "slopay_chip.h"
+#include "slopay-chip.h"
 
 #include <stdlib.h>
 
@@ -372,4 +372,6 @@ void slopay_chip_set_stereo(slopay_chip_t *ay, int stereo)
 {
   ay->mixer.stereo = stereo ? 1 : 0;
 }
+
+
 

@@ -1,4 +1,4 @@
-/* slopay_loader.h
+/* slopay-loader.h
  *
  * AY format music file loader (Motorola/big-endian format)
  */
@@ -84,3 +84,4 @@ uint8_t slopay_loader_get_num_songs(slopay_loader_file_t *file);
 char *slopay_loader_get_song_name(slopay_loader_file_t *file, uint8_t index);
 
 #endif /* SLOPAY_LOADER_H */
+
