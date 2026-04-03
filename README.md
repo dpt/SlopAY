@@ -27,7 +27,7 @@ The project builds two executables:
 ### SlopAY syntax
 
 ```text
-SlopAY [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-P <machine>] [-I <50|300>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>
+SlopAY [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-P <machine>] [-I <50|300>] [-r <Hz>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>
 ```
 
 - `-v, --volume <percent>`: AY volume (0-100, default 100)
@@ -36,6 +36,7 @@ SlopAY [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-P <machine>] [-I 
 - `-x, --stereo-mode <mode>`: stereo mode (`mono`, `abc`, or `acb`, default `abc`)
 - `-P, --machine <machine>`: timing profile (`spectrum` or `cpc`, default `spectrum`)
 - `-I, --cpc-rate <50|300>`: CPC interrupt-rate override (used only with `-P cpc`, default `50`)
+- `-r, --sample-rate <Hz>`: audio sample rate (8000-192000, default 44100)
 - `-p, --piano-roll`: print per-frame AY/Beeper notes
 - `-s, --song <song>`: 0-based song index from the AY file
 - `-t, --time <seconds>`: max playback time (`0` uses song length)
@@ -53,6 +54,7 @@ SlopAY -x acb -t 30 -w out-acb.wav ProjectAY/Spectrum/Games/example.ay
 SlopAY -P cpc -t 30 -w out-cpc.wav ProjectAY/CPC/Games/example.ay
 SlopAY -P cpc -I 50 -t 30 -w out-cpc-50hz.wav ProjectAY/CPC/Games/example.ay
 SlopAY -s 0 -t 90 -M out.mid -B 10 ProjectAY/Spectrum/Demos/example.ay
+SlopAY -r 48000 -t 60 -w out-48khz.wav ProjectAY/Spectrum/Games/example.ay
 ```
 
 ### MIDIAY syntax

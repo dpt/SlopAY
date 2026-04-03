@@ -764,6 +764,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
                            int piano_roll_enabled,
                            int midi_beeper_channel,
                            int max_seconds,
+                           int sample_rate,
                            const char *wav_filename,
                            const char *midi_filename)
 {
@@ -790,7 +791,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
   memset(&io, 0, sizeof(io));
   slopay_z80_missing_opcode_reset();
   io.cpu = cpu;
-  io.ay = slopay_chip_create(profile->ay_clock_freq, SLOPAY_SAMPLE_RATE);
+  io.ay = slopay_chip_create(profile->ay_clock_freq, sample_rate);
   if (io.ay == NULL) {
     slopay_z80_destroy(cpu);
     return;
@@ -851,9 +852,9 @@ static void slopay_run_z80(slopay_loader_file_t *file,
   io.played_frames = 0;
   io.ay_clock_freq = profile->ay_clock_freq;
   io.frame_rate = effective_interrupt_rate;
-  io.samples_per_frame = SLOPAY_SAMPLE_RATE / effective_interrupt_rate;
+  io.samples_per_frame = sample_rate / effective_interrupt_rate;
   io.samples_to_next_frame = io.samples_per_frame;
-  io.z80_cycles_per_sample_fxp = (profile->z80_clock_freq << Z80_CYCLE_FXP) / SLOPAY_SAMPLE_RATE;
+  io.z80_cycles_per_sample_fxp = (profile->z80_clock_freq << Z80_CYCLE_FXP) / sample_rate;
   io.z80_cycle_error_fxp = 0;
   io.beeper_gain = (float)beeper_volume_percent / 100.0f;
   io.beeper_mix_mode = beeper_mix_mode;
@@ -876,29 +877,29 @@ static void slopay_run_z80(slopay_loader_file_t *file,
       slopay_z80_destroy(cpu);
       return;
     }
-    io.midi_export_enabled = 1;
-    printf("Writing MIDI: %s  (%d frames, %.1f s at %d Hz, beeper channel=%u, machine=%s)\n",
-           midi_filename, frame_count,
-           (double)frame_count / effective_interrupt_rate, SLOPAY_SAMPLE_RATE,
-           io.midi_beeper_channel, profile->name);
-  }
+     io.midi_export_enabled = 1;
+     printf("Writing MIDI: %s  (%d frames, %.1f s at %d Hz, beeper channel=%u, machine=%s)\n",
+            midi_filename, frame_count,
+            (double)frame_count / effective_interrupt_rate, sample_rate,
+            io.midi_beeper_channel, profile->name);
+   }
 
   if (wav_filename != NULL) {
     /* ---- WAV file output mode ---------------------------------------- */
     slopay_target_wave_t wav_driver;
     const uint32_t total_samples = (uint32_t)frame_count * (uint32_t)io.samples_per_frame;
 
-    if (slopay_target_wave_init(&wav_driver, wav_filename, SLOPAY_SAMPLE_RATE,
-                             render_audio, &io) != 0) {
-      fprintf(stderr, "Error: Failed to open WAV file '%s'\n", wav_filename);
+     if (slopay_target_wave_init(&wav_driver, wav_filename, sample_rate,
+                              render_audio, &io) != 0) {
+       fprintf(stderr, "Error: Failed to open WAV file '%s'\n", wav_filename);
       slopay_chip_destroy(io.ay);
       slopay_z80_destroy(cpu);
       return;
     }
 
-    printf("Writing WAV: %s  (%d frames, %.1f s at %d Hz)\n",
-           wav_filename, frame_count,
-           (double)frame_count / effective_interrupt_rate, SLOPAY_SAMPLE_RATE);
+     printf("Writing WAV: %s  (%d frames, %.1f s at %d Hz)\n",
+            wav_filename, frame_count,
+            (double)frame_count / effective_interrupt_rate, sample_rate);
 
     if (slopay_target_wave_render_all(&wav_driver, total_samples) < 0)
       fprintf(stderr, "Warning: WAV render incomplete\n");
@@ -906,10 +907,10 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     slopay_target_wave_cleanup(&wav_driver);
     printf("WAV written: %s\n", wav_filename);
 
-  } else {
-    /* ---- macOS Core Audio real-time output mode ----------------------- */
-    if (slopay_target_macos_init(&io.audio_driver, SLOPAY_SAMPLE_RATE, render_audio, &io) != noErr) {
-      fprintf(stderr, "Error: Failed to initialize macOS audio driver\n");
+   } else {
+     /* ---- macOS Core Audio real-time output mode ----------------------- */
+     if (slopay_target_macos_init(&io.audio_driver, sample_rate, render_audio, &io) != noErr) {
+       fprintf(stderr, "Error: Failed to initialize macOS audio driver\n");
       slopay_finalize_midi_export(&io);
       slopay_chip_destroy(io.ay);
       slopay_z80_destroy(cpu);
@@ -969,7 +970,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
 
 static void print_usage(const char *prog)
 {
-  printf("Usage: %s [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-P <machine>] [-I <50|300>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>\n", prog);
+  printf("Usage: %s [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-P <machine>] [-I <50|300>] [-r <Hz>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>\n", prog);
   printf("\n");
   printf("Loads and displays information about an AY music file.\n");
   printf("\n");
@@ -982,6 +983,7 @@ static void print_usage(const char *prog)
   printf("  -x, --stereo-mode <mode>        Stereo mode: mono, abc or acb (default abc)\n");
   printf("  -P, --machine <type>            Timing profile: spectrum or cpc (default spectrum)\n");
   printf("  -I, --cpc-rate <50|300>         CPC interrupt rate override (default 50 in cpc mode)\n");
+  printf("  -r, --sample-rate <Hz>          Audio sample rate in Hz (8000-192000, default 44100)\n");
   printf("  -p, --piano-roll                Print per-frame AY/Beeper notes during playback\n");
   printf("  -s, --song <song>               Song number to play (0-based, default first song from file)\n");
   printf("  -t, --time <seconds>            Maximum playback time in seconds\n");
@@ -1026,18 +1028,19 @@ static void print_file_info(slopay_loader_file_t *file)
 }
 
 static void print_song_info(slopay_loader_file_t *file,
-                            uint8_t song_index,
-                            int volume_percent,
-                            int beeper_volume_percent,
-                            slopay_beeper_mix_mode_t beeper_mix_mode,
-                            slopay_stereo_mode_t stereo_mode,
-                            slopay_machine_t machine,
-                            int cpc_rate_override,
-                            int piano_roll_enabled,
-                            int midi_beeper_channel,
-                            int max_seconds,
-                            const char *wav_filename,
-                            const char *midi_filename)
+                             uint8_t song_index,
+                             int volume_percent,
+                             int beeper_volume_percent,
+                             slopay_beeper_mix_mode_t beeper_mix_mode,
+                             slopay_stereo_mode_t stereo_mode,
+                             slopay_machine_t machine,
+                             int cpc_rate_override,
+                             int piano_roll_enabled,
+                             int midi_beeper_channel,
+                             int max_seconds,
+                             int sample_rate,
+                             const char *wav_filename,
+                             const char *midi_filename)
 {
   const slopay_machine_profile_t *profile = slopay_machine_profile(machine);
   const int effective_interrupt_rate =
@@ -1106,19 +1109,20 @@ static void print_song_info(slopay_loader_file_t *file,
 
   printf("\n");
 
-  slopay_run_z80(file,
-                 song,
-                 volume_percent,
-                 beeper_volume_percent,
-                 beeper_mix_mode,
-                 stereo_mode,
-                 machine,
-                 cpc_rate_override,
-                 piano_roll_enabled,
-                 midi_beeper_channel,
-                 max_seconds,
-                 wav_filename,
-                 midi_filename);
+   slopay_run_z80(file,
+                  song,
+                  volume_percent,
+                  beeper_volume_percent,
+                  beeper_mix_mode,
+                  stereo_mode,
+                  machine,
+                  cpc_rate_override,
+                  piano_roll_enabled,
+                  midi_beeper_channel,
+                  max_seconds,
+                  sample_rate,
+                  wav_filename,
+                  midi_filename);
 
   slopay_loader_song_destroy(song);
 }
@@ -1132,6 +1136,7 @@ int main(int argc, char *argv[])
   int opt;
   int volume_percent = 100;
   int beeper_volume_percent = 22;
+  int sample_rate = SLOPAY_SAMPLE_RATE;
   slopay_beeper_mix_mode_t beeper_mix_mode = SLOPAY_BEEPER_MIX_ADD;
   slopay_stereo_mode_t stereo_mode = SLOPAY_STEREO_MODE_ABC;
   slopay_machine_t machine = SLOPAY_MACHINE_SPECTRUM;
@@ -1154,6 +1159,7 @@ int main(int argc, char *argv[])
     { "stereo-mode",   required_argument, NULL, 'x' },
     { "machine",       required_argument, NULL, 'P' },
     { "cpc-rate",      required_argument, NULL, 'I' },
+    { "sample-rate",   required_argument, NULL, 'r' },
     { "piano-roll",    no_argument,       NULL, 'p' },
     { "song",          required_argument, NULL, 's' },
     { "time",          required_argument, NULL, 't' },
@@ -1163,7 +1169,7 @@ int main(int argc, char *argv[])
     { NULL,             0,                 NULL,  0  }
   };
 
-  while ((opt = getopt_long(argc, argv, "hv:b:m:x:P:I:ps:t:w:M:B:", long_opts, NULL)) != -1) {
+  while ((opt = getopt_long(argc, argv, "hv:b:m:x:P:I:r:ps:t:w:M:B:", long_opts, NULL)) != -1) {
     switch (opt) {
     case 'h':
       print_usage(argv[0]);
@@ -1209,9 +1215,17 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Error: CPC rate must be 50 or 300\n");
         return EXIT_FAILURE;
       }
-      cpc_rate_override = (int)parsed;
-      break;
-    case 'p':
+     cpc_rate_override = (int)parsed;
+       break;
+     case 'r':
+       parsed = strtol(optarg, &endptr, 10);
+       if (*optarg == '\0' || *endptr != '\0' || parsed < 8000 || parsed > 192000) {
+         fprintf(stderr, "Error: Sample rate must be an integer from 8000 to 192000 Hz\n");
+         return EXIT_FAILURE;
+       }
+       sample_rate = (int)parsed;
+       break;
+     case 'p':
       piano_roll_enabled = 1;
       break;
     case 's':
@@ -1274,6 +1288,7 @@ int main(int argc, char *argv[])
   printf("Machine profile: %s\n", slopay_machine_name(machine));
   if (machine == SLOPAY_MACHINE_CPC && cpc_rate_override > 0)
     printf("CPC interrupt rate override: %d Hz\n", cpc_rate_override);
+  printf("Sample rate: %d Hz\n", sample_rate);
   printf("Piano roll: %s\n", piano_roll_enabled ? "on" : "off");
   if (midi_filename != NULL) {
     printf("MIDI export: %s\n", midi_filename);
@@ -1297,37 +1312,39 @@ int main(int argc, char *argv[])
       free(song_name);
   }
 
-  /* Display details for requested song */
-  if (have_song_index) {
-    print_song_info(file,
-                    song_index,
-                    volume_percent,
-                    beeper_volume_percent,
-                    beeper_mix_mode,
-                    stereo_mode,
-                    machine,
-                    cpc_rate_override,
-                    piano_roll_enabled,
-                    midi_beeper_channel,
-                    max_seconds,
-                    wav_filename,
-                    midi_filename);
-  } else if (file->num_songs > 0) {
-    /* Display first song by default */
-    print_song_info(file,
-                    file->header.first_song,
-                    volume_percent,
-                    beeper_volume_percent,
-                    beeper_mix_mode,
-                    stereo_mode,
-                    machine,
-                    cpc_rate_override,
-                    piano_roll_enabled,
-                    midi_beeper_channel,
-                    max_seconds,
-                    wav_filename,
-                    midi_filename);
-  }
+   /* Display details for requested song */
+   if (have_song_index) {
+     print_song_info(file,
+                     song_index,
+                     volume_percent,
+                     beeper_volume_percent,
+                     beeper_mix_mode,
+                     stereo_mode,
+                     machine,
+                     cpc_rate_override,
+                     piano_roll_enabled,
+                     midi_beeper_channel,
+                     max_seconds,
+                     sample_rate,
+                     wav_filename,
+                     midi_filename);
+   } else if (file->num_songs > 0) {
+     /* Display first song by default */
+     print_song_info(file,
+                     file->header.first_song,
+                     volume_percent,
+                     beeper_volume_percent,
+                     beeper_mix_mode,
+                     stereo_mode,
+                     machine,
+                     cpc_rate_override,
+                     piano_roll_enabled,
+                     midi_beeper_channel,
+                     max_seconds,
+                     sample_rate,
+                     wav_filename,
+                     midi_filename);
+   }
 
   /* Cleanup */
   slopay_loader_file_destroy(file);
