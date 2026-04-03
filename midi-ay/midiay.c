@@ -53,21 +53,17 @@
 
 /* ----------------------------------------------------------------------- */
 
-static slopay_chip_t   *ay;
-static polyblep_osc_t   oscs[MAX_POLYPHONY];
-static reverb_t        *rev[2];
+static slopay_chip_t        *ay;
+static polyblep_osc_t        oscs[MAX_POLYPHONY];
+static reverb_t             *rev[2];
 static slopay_target_macos_t audio_driver;
-
-static int              output_polyblep;
+static int                   output_polyblep;
 
 static int parse_register_write(const char *input, int *reg_out, int *val_out)
 {
   char *endptr;
-  long reg;
-  long val;
-
-  if (input == NULL || reg_out == NULL || val_out == NULL)
-    return 0;
+  long  reg;
+  long  val;
 
   reg = strtol(input, &endptr, 10);
   if (endptr == input)
@@ -90,12 +86,62 @@ static int parse_register_write(const char *input, int *reg_out, int *val_out)
   return 1;
 }
 
+static int parse_volume_command(const char *input, int *value_out)
+{
+  char *endptr;
+  long  value;
+
+  if (input[0] != 'V' && input[0] != 'v')
+    return 0;
+
+  endptr = (char *)input + 1;
+  while (*endptr == ' ' || *endptr == '\t')
+    endptr++;
+
+  value = strtol(endptr, &endptr, 10);
+  if (value < 0 || value > MIDI_MAX_VALUE)
+    return 0;
+
+  while (*endptr == ' ' || *endptr == '\t' || *endptr == '\r' || *endptr == '\n')
+    endptr++;
+  if (*endptr != '\0')
+    return 0;
+
+  *value_out = (int)value;
+  return 1;
+}
+
+static int parse_master_volume_command(const char *input, int *value_out)
+{
+  char *endptr;
+  long  value;
+
+  if (input[0] != 'M' && input[0] != 'm')
+    return 0;
+
+  endptr = (char *)input + 1;
+  while (*endptr == ' ' || *endptr == '\t')
+    endptr++;
+
+  value = strtol(endptr, &endptr, 10);
+  if (value < 0 || value > 100)
+    return 0;
+
+  while (*endptr == ' ' || *endptr == '\t' || *endptr == '\r' || *endptr == '\n')
+    endptr++;
+  if (*endptr != '\0')
+    return 0;
+
+  *value_out = (int)value;
+  return 1;
+}
+
 /* ----------------------------------------------------------------------- */
 
 static void render_audio(void *userdata, float *output, uint32_t frames)
 {
-  int16_t            left, right;
-  pbflt_t            o1, o2, o3;
+  int16_t left, right;
+  pbflt_t o1, o2, o3;
 
   (void)userdata;
 
@@ -104,7 +150,7 @@ static void render_audio(void *userdata, float *output, uint32_t frames)
       o1 = polyblep_sample(&oscs[0]);
       o2 = polyblep_sample(&oscs[1]);
       o3 = polyblep_sample(&oscs[2]);
-      const float mixed = (float)((o1 + o2 + o3) / 3.0f * 32767.0f * 0.10f);
+      const float mixed = (o1 + o2 + o3) / 3.0f * 32767.0f * 0.10f;
       left = right = (int16_t)lroundf(mixed);
     } else {
       const slopay_chip_sample_t pair = slopay_chip_get_sample(ay);
@@ -208,12 +254,12 @@ static void key_release_all(void)
   }
 }
 
-static void setvolume(float midi_volume)
+static void setchannelvol(float midi_volume)
 {
   int ch;
   const uint8_t ay_volume = (uint8_t)lroundf(midi_volume * 15.0f);
 
-  printf("Setting volume to %.2f\n", midi_volume);
+  printf("Setting channel volumes to %.2f\n", midi_volume);
   for (ch = 0; ch < MAX_POLYPHONY; ch++) {
     slopay_chip_write_register(ay, (slopay_chip_reg_t)(AY_REG_CHANNEL_A_VOLUME + ch), ay_volume);
     polyblep_set_pw(&oscs[ch], midi_volume);
@@ -306,7 +352,7 @@ static void midiMessageCallback(const MIDIPacketList *pktList, void *refCon, voi
         if (data1 == MIDI_VOLUME) { /* volume */
           const float midi_volume = (float)data2 / (float)MIDI_MAX_VALUE;
           printf("midi_volume=%.2f\n", midi_volume);
-          setvolume(midi_volume);
+          setchannelvol(midi_volume);
         }
         break;
       case MIDI_PROGRAM_CHANGE: /* Program Change */
@@ -373,11 +419,13 @@ static void teardownMIDI(void)
 static void repl(void)
 {
   char input[100];
-  int  reg, val;
+  int  reg, val, volume_value, master_volume_value;
   int  cmd;
 
   printf("Enter register and value (e.g., '0 128' for reg 0, value 128) to program AY\n");
   printf("Enter a note A..G to play (holding), or '.' to stop all notes\n");
+  printf("Enter 'v <0-127>' to set channel volume from MIDI scale\n");
+  printf("Enter 'm <0-100>' to set master volume percent\n");
   printf("Enter 's' to set envelope shape, 'p' to set envelope period, 'r' to set reverb delay, 't' to cycle stereo mode (mono/abc/acb) or 'q' to quit\n");
 
   for (;;) {
@@ -409,6 +457,11 @@ static void repl(void)
       key_hold(MIDI_A4 + cmd - 'A');
     } else if (cmd == '.') {
       key_release_all();
+    } else if (parse_master_volume_command(input, &master_volume_value)) {
+      slopay_chip_set_volume(ay, master_volume_value);
+      printf("Set master volume to %d%%\n", master_volume_value);
+    } else if (parse_volume_command(input, &volume_value)) {
+      setchannelvol((float)volume_value / (float)MIDI_MAX_VALUE);
     } else if (parse_register_write(input, &reg, &val)) {
       slopay_chip_write_register(ay, (slopay_chip_reg_t)reg, (uint8_t)val);
       printf("Wrote %d to register %d\n", val, reg);
@@ -478,6 +531,7 @@ int main(void)
     slopay_target_macos_cleanup(&audio_driver);
     goto failure;
   }
+
   repl();
 
   /* Stop and cleanup */

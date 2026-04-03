@@ -55,14 +55,14 @@ typedef enum {
 } slopay_chip_stereo_mode_t;
 
 slopay_chip_t *slopay_chip_create(int clock_freq, int sample_rate);
-void slopay_chip_destroy(slopay_chip_t *chip);
+void slopay_chip_destroy(slopay_chip_t *ay);
 
-void slopay_chip_write_register(slopay_chip_t *chip, slopay_chip_reg_t reg, uint8_t value);
-uint8_t slopay_chip_read_register(slopay_chip_t *chip, slopay_chip_reg_t reg);
+void slopay_chip_write_register(slopay_chip_t *ay, slopay_chip_reg_t reg, uint8_t value);
+uint8_t slopay_chip_read_register(slopay_chip_t *ay, slopay_chip_reg_t reg);
 
-slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *chip);
-void slopay_chip_set_volume(slopay_chip_t *chip, int volume);
-void slopay_chip_set_stereo_mode(slopay_chip_t *chip, slopay_chip_stereo_mode_t mode);
+slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay);
+void slopay_chip_set_volume(slopay_chip_t *ay, int volume);
+void slopay_chip_set_stereo_mode(slopay_chip_t *ay, slopay_chip_stereo_mode_t mode);
 
 #ifdef __cplusplus
 }

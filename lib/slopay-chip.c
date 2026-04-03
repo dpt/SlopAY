@@ -396,7 +396,6 @@ void slopay_chip_set_volume(slopay_chip_t *ay, int volume)
   ay->mixer.master_volume = AY_CLAMP(volume, 0, 100);
 }
 
-
 void slopay_chip_set_stereo_mode(slopay_chip_t *ay, slopay_chip_stereo_mode_t mode)
 {
   if (mode > SLOPAY_CHIP_STEREO_MODE_ACB)
@@ -404,6 +403,3 @@ void slopay_chip_set_stereo_mode(slopay_chip_t *ay, slopay_chip_stereo_mode_t mo
   ay->mixer.stereo_mode = mode;
   ay->mixer.stereo = (mode == SLOPAY_CHIP_STEREO_MODE_MONO) ? 0 : 1;
 }
-
-
-

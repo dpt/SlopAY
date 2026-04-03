@@ -60,6 +60,8 @@ REPL command syntax:
 - `.`: stop all notes
 - `s`: set envelope shape
 - `p`: set envelope period
+- `v <0-127>`: set channel volume (MIDI scale)
+- `m <0-100>`: set master volume percent
 - `r`: cycle reverb delay
 - `t`: cycle stereo mode (`mono` -> `abc` -> `acb`)
 - `q`: quit
