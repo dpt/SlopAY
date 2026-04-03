@@ -235,12 +235,22 @@ static void setenvperiod(void)
   slopay_chip_write_register(ay, AY_REG_ENVELOPE_COARSE_DURATION, period);
 }
 
-static void togglestereo(void)
+static void cyclestereomode(void)
 {
-  static int stereo;
-  stereo = (stereo + 1) % 2;
-  printf("Setting stereo to %d\n", stereo);
-  slopay_chip_set_stereo(ay, stereo);
+  static int mode = SLOPAY_CHIP_STEREO_MODE_MONO;
+  const char *name;
+
+  mode = (mode + 1) % 3;
+  slopay_chip_set_stereo_mode(ay, (slopay_chip_stereo_mode_t)mode);
+
+  if (mode == SLOPAY_CHIP_STEREO_MODE_ACB)
+    name = "acb";
+  else if (mode == SLOPAY_CHIP_STEREO_MODE_ABC)
+    name = "abc";
+  else
+    name = "mono";
+
+  printf("Setting stereo mode to %s\n", name);
 }
 
 /* ----------------------------------------------------------------------- */
@@ -368,7 +378,7 @@ static void repl(void)
 
   printf("Enter register and value (e.g., '0 128' for reg 0, value 128) to program AY\n");
   printf("Enter a note A..G to play (holding), or '.' to stop all notes\n");
-  printf("Enter 's' to set envelope shape, 'p' to set envelope period, 'r' to set reverb delay, 't' to toggle stereo or 'q' to quit\n");
+  printf("Enter 's' to set envelope shape, 'p' to set envelope period, 'r' to set reverb delay, 't' to cycle stereo mode (mono/abc/acb) or 'q' to quit\n");
 
   for (;;) {
     printf("Command> ");
@@ -394,7 +404,7 @@ static void repl(void)
       reverb_set_delay(rev[1], delay);
       printf("Set reverb delay to %zu samples (%.2f ms)\n", delay, (double)delay / SAMPLE_RATE * 1000);
     } else if (cmd == 'T') {
-      togglestereo();
+      cyclestereomode();
     } else if (cmd >= 'A' && cmd <= 'G') {
       key_hold(MIDI_A4 + cmd - 'A');
     } else if (cmd == '.') {
@@ -435,7 +445,7 @@ int main(void)
   slopay_chip_write_register(ay, AY_REG_ENVELOPE_SHAPE, 0);
   slopay_chip_write_register(ay, AY_REG_ENVELOPE_FINE_DURATION, 0);
   slopay_chip_write_register(ay, AY_REG_ENVELOPE_COARSE_DURATION, 4);
-  togglestereo(); /* set stereo */
+  slopay_chip_set_stereo_mode(ay, SLOPAY_CHIP_STEREO_MODE_ABC); /* default stereo mode */
   slopay_chip_set_volume(ay, 10); /* 10% master volume */
 
   rev[0] = reverb_create(SAMPLE_RATE);

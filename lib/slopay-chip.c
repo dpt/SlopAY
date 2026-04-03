@@ -85,6 +85,7 @@ typedef struct {
 typedef struct {
   int           master_volume; /* 0..100 */
   int           stereo;        /* 0=mono, 1=stereo */
+  slopay_chip_stereo_mode_t stereo_mode;
 } aymixer_t;
 
 /* AY state */
@@ -120,6 +121,7 @@ slopay_chip_t *slopay_chip_create(int clock_freq, int sample_rate)
   /* Set default configuration */
   ay->mixer.master_volume = 100;
   ay->mixer.stereo = 1; /* Enable stereo by default */
+  ay->mixer.stereo_mode = SLOPAY_CHIP_STEREO_MODE_ABC;
 
   return ay;
 }
@@ -334,20 +336,46 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
     mixed[ch] = (output > 0) ? amplitude : (output < 0) ? -amplitude : 0;
   }
 
-  if (ay->mixer.stereo) {
-    output_l = output_r = 0;
-    if (channel_enabled & 1) {
-      output_l += mixed[0] * 2 / 6;
-      output_r += mixed[0] * 2 / 6;
-    }
+  if (ay->mixer.stereo && ay->mixer.stereo_mode != SLOPAY_CHIP_STEREO_MODE_MONO) {
+    int left_sum = 0;
+    int right_sum = 0;
+    int left_count = 0;
+    int right_count = 0;
+
+    /* Right channel is always B + C in both stereo modes. */
     if (channel_enabled & 2) {
-      output_l += mixed[1] * 3 / 6;
-      output_r += mixed[1] * 1 / 6;
+      right_sum += mixed[1];
+      right_count++;
     }
     if (channel_enabled & 4) {
-      output_l += mixed[2] * 1 / 6;
-      output_r += mixed[2] * 3 / 6;
+      right_sum += mixed[2];
+      right_count++;
     }
+
+    if (ay->mixer.stereo_mode == SLOPAY_CHIP_STEREO_MODE_ACB) {
+      /* ACB: left = A + C */
+      if (channel_enabled & 1) {
+        left_sum += mixed[0];
+        left_count++;
+      }
+      if (channel_enabled & 4) {
+        left_sum += mixed[2];
+        left_count++;
+      }
+    } else {
+      /* ABC: left = A + B */
+      if (channel_enabled & 1) {
+        left_sum += mixed[0];
+        left_count++;
+      }
+      if (channel_enabled & 2) {
+        left_sum += mixed[1];
+        left_count++;
+      }
+    }
+
+    output_l = (left_count > 0) ? (left_sum / left_count) : 0;
+    output_r = (right_count > 0) ? (right_sum / right_count) : 0;
   } else {
     output_l = output_r = (mixed[0] + mixed[1] + mixed[2]) / 3;
   }
@@ -368,9 +396,13 @@ void slopay_chip_set_volume(slopay_chip_t *ay, int volume)
   ay->mixer.master_volume = AY_CLAMP(volume, 0, 100);
 }
 
-void slopay_chip_set_stereo(slopay_chip_t *ay, int stereo)
+
+void slopay_chip_set_stereo_mode(slopay_chip_t *ay, slopay_chip_stereo_mode_t mode)
 {
-  ay->mixer.stereo = stereo ? 1 : 0;
+  if (mode > SLOPAY_CHIP_STEREO_MODE_ACB)
+    mode = SLOPAY_CHIP_STEREO_MODE_ABC;
+  ay->mixer.stereo_mode = mode;
+  ay->mixer.stereo = (mode == SLOPAY_CHIP_STEREO_MODE_MONO) ? 0 : 1;
 }
 
 

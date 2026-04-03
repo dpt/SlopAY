@@ -21,12 +21,13 @@ The project builds two executables:
 ### SlopAY syntax
 
 ```text
-SlopAY [-v <percent>] [-b <percent>] [-m <mode>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>
+SlopAY [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>
 ```
 
 - `-v, --volume <percent>`: AY volume (0-100, default 100)
 - `-b, --beeper-volume <percent>`, `--beeper <percent>`: beeper volume (0-100, default 22)
 - `-m, --beeper-mix <mode>`, `--mix <mode>`: beeper mix mode (`add` or `duck`, default `add`)
+- `-x, --stereo-mode <mode>`: stereo mode (`mono`, `abc`, or `acb`, default `abc`)
 - `-p, --piano-roll`: print per-frame AY/Beeper notes
 - `-s, --song <song>`: 0-based song index from the AY file
 - `-t, --time <seconds>`: max playback time (`0` uses song length)
@@ -40,6 +41,7 @@ Examples:
 ```text
 SlopAY ProjectAY/Spectrum/Demos/example.ay
 SlopAY -s 1 -t 60 -w out.wav ProjectAY/Spectrum/Games/example.ay
+SlopAY -x acb -t 30 -w out-acb.wav ProjectAY/Spectrum/Games/example.ay
 SlopAY -s 0 -t 90 -M out.mid -B 10 ProjectAY/Spectrum/Demos/example.ay
 ```
 
@@ -59,7 +61,7 @@ REPL command syntax:
 - `s`: set envelope shape
 - `p`: set envelope period
 - `r`: cycle reverb delay
-- `t`: toggle stereo
+- `t`: cycle stereo mode (`mono` -> `abc` -> `acb`)
 - `q`: quit
 
 Links

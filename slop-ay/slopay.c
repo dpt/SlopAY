@@ -43,6 +43,12 @@ typedef enum {
   SLOPAY_BEEPER_MIX_DUCK
 } slopay_beeper_mix_mode_t;
 
+typedef enum {
+  SLOPAY_STEREO_MODE_MONO = 0,
+  SLOPAY_STEREO_MODE_ABC,
+  SLOPAY_STEREO_MODE_ACB
+} slopay_stereo_mode_t;
+
 typedef struct {
   slopay_z80_t       *cpu;
   slopay_chip_t      *ay;
@@ -87,6 +93,13 @@ static const char *slopay_beeper_mix_mode_name(slopay_beeper_mix_mode_t mode)
   return mode == SLOPAY_BEEPER_MIX_DUCK ? "duck" : "add";
 }
 
+static const char *slopay_stereo_mode_name(slopay_stereo_mode_t mode)
+{
+  if (mode == SLOPAY_STEREO_MODE_MONO)
+    return "mono";
+  return mode == SLOPAY_STEREO_MODE_ACB ? "acb" : "abc";
+}
+
 static int slopay_parse_beeper_mix_mode(const char *text,
                                         slopay_beeper_mix_mode_t *out_mode)
 {
@@ -100,6 +113,29 @@ static int slopay_parse_beeper_mix_mode(const char *text,
 
   if (strcmp(text, "duck") == 0 || strcmp(text, "ducking") == 0) {
     *out_mode = SLOPAY_BEEPER_MIX_DUCK;
+    return 0;
+  }
+
+  return -1;
+}
+
+static int slopay_parse_stereo_mode(const char *text, slopay_stereo_mode_t *out_mode)
+{
+  if (text == NULL || out_mode == NULL)
+    return -1;
+
+  if (strcmp(text, "abc") == 0) {
+    *out_mode = SLOPAY_STEREO_MODE_ABC;
+    return 0;
+  }
+
+  if (strcmp(text, "mono") == 0) {
+    *out_mode = SLOPAY_STEREO_MODE_MONO;
+    return 0;
+  }
+
+  if (strcmp(text, "acb") == 0) {
+    *out_mode = SLOPAY_STEREO_MODE_ACB;
     return 0;
   }
 
@@ -625,6 +661,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
                            int volume_percent,
                            int beeper_volume_percent,
                            slopay_beeper_mix_mode_t beeper_mix_mode,
+                           slopay_stereo_mode_t stereo_mode,
                            int piano_roll_enabled,
                            int midi_beeper_channel,
                            int max_seconds,
@@ -653,6 +690,12 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     return;
   }
   slopay_chip_set_volume(io.ay, volume_percent);
+  slopay_chip_set_stereo_mode(io.ay,
+                              stereo_mode == SLOPAY_STEREO_MODE_MONO
+                                ? SLOPAY_CHIP_STEREO_MODE_MONO
+                                : (stereo_mode == SLOPAY_STEREO_MODE_ACB
+                                    ? SLOPAY_CHIP_STEREO_MODE_ACB
+                                    : SLOPAY_CHIP_STEREO_MODE_ABC));
 
   slopay_z80_set_port_callbacks(cpu, slopay_port_read_stub, slopay_port_write_stub, &io);
 
@@ -811,7 +854,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
 
 static void print_usage(const char *prog)
 {
-  printf("Usage: %s [-v <percent>] [-b <percent>] [-m <mode>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>\n", prog);
+  printf("Usage: %s [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>\n", prog);
   printf("\n");
   printf("Loads and displays information about an AY music file.\n");
   printf("\n");
@@ -821,6 +864,7 @@ static void print_usage(const char *prog)
   printf("      --beeper <percent>          Alias for --beeper-volume\n");
   printf("  -m, --beeper-mix <mode>         Beeper mix mode: add or duck (default add)\n");
   printf("      --mix <mode>                Alias for --beeper-mix\n");
+  printf("  -x, --stereo-mode <mode>        Stereo mode: mono, abc or acb (default abc)\n");
   printf("  -p, --piano-roll                Print per-frame AY/Beeper notes during playback\n");
   printf("  -s, --song <song>               Song number to play (0-based, default first song from file)\n");
   printf("  -t, --time <seconds>            Maximum playback time in seconds\n");
@@ -869,6 +913,7 @@ static void print_song_info(slopay_loader_file_t *file,
                             int volume_percent,
                             int beeper_volume_percent,
                             slopay_beeper_mix_mode_t beeper_mix_mode,
+                            slopay_stereo_mode_t stereo_mode,
                             int piano_roll_enabled,
                             int midi_beeper_channel,
                             int max_seconds,
@@ -941,6 +986,7 @@ static void print_song_info(slopay_loader_file_t *file,
                  volume_percent,
                  beeper_volume_percent,
                  beeper_mix_mode,
+                 stereo_mode,
                  piano_roll_enabled,
                  midi_beeper_channel,
                  max_seconds,
@@ -960,6 +1006,7 @@ int main(int argc, char *argv[])
   int volume_percent = 100;
   int beeper_volume_percent = 22;
   slopay_beeper_mix_mode_t beeper_mix_mode = SLOPAY_BEEPER_MIX_ADD;
+  slopay_stereo_mode_t stereo_mode = SLOPAY_STEREO_MODE_ABC;
   int piano_roll_enabled = 0;
   int midi_beeper_channel = 3;
   int max_seconds = 0;
@@ -975,6 +1022,7 @@ int main(int argc, char *argv[])
     { "beeper",        required_argument, NULL, 'b' },
     { "beeper-mix",    required_argument, NULL, 'm' },
     { "mix",           required_argument, NULL, 'm' },
+    { "stereo-mode",   required_argument, NULL, 'x' },
     { "piano-roll",    no_argument,       NULL, 'p' },
     { "song",          required_argument, NULL, 's' },
     { "time",          required_argument, NULL, 't' },
@@ -984,7 +1032,7 @@ int main(int argc, char *argv[])
     { NULL,             0,                 NULL,  0  }
   };
 
-  while ((opt = getopt_long(argc, argv, "hv:b:m:ps:t:w:M:B:", long_opts, NULL)) != -1) {
+  while ((opt = getopt_long(argc, argv, "hv:b:m:x:ps:t:w:M:B:", long_opts, NULL)) != -1) {
     switch (opt) {
     case 'h':
       print_usage(argv[0]);
@@ -1009,6 +1057,12 @@ int main(int argc, char *argv[])
       if (slopay_parse_beeper_mix_mode(optarg, &beeper_mix_mode) != 0) {
         fprintf(stderr,
                 "Error: Beeper mix must be one of: add, additive, duck, ducking\n");
+        return EXIT_FAILURE;
+      }
+      break;
+    case 'x':
+      if (slopay_parse_stereo_mode(optarg, &stereo_mode) != 0) {
+        fprintf(stderr, "Error: Stereo mode must be one of: mono, abc, acb\n");
         return EXIT_FAILURE;
       }
       break;
@@ -1071,6 +1125,7 @@ int main(int argc, char *argv[])
   printf("AY volume: %d%%\n", volume_percent);
   printf("Beeper volume: %d%%\n", beeper_volume_percent);
   printf("Beeper mix: %s\n", slopay_beeper_mix_mode_name(beeper_mix_mode));
+  printf("Stereo mode: %s\n", slopay_stereo_mode_name(stereo_mode));
   printf("Piano roll: %s\n", piano_roll_enabled ? "on" : "off");
   if (midi_filename != NULL) {
     printf("MIDI export: %s\n", midi_filename);
@@ -1101,6 +1156,7 @@ int main(int argc, char *argv[])
                     volume_percent,
                     beeper_volume_percent,
                     beeper_mix_mode,
+                    stereo_mode,
                     piano_roll_enabled,
                     midi_beeper_channel,
                     max_seconds,
@@ -1113,6 +1169,7 @@ int main(int argc, char *argv[])
                     volume_percent,
                     beeper_volume_percent,
                     beeper_mix_mode,
+                    stereo_mode,
                     piano_roll_enabled,
                     midi_beeper_channel,
                     max_seconds,

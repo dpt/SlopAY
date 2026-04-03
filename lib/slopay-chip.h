@@ -48,6 +48,12 @@ typedef struct slopay_chip slopay_chip_t;
 typedef uint8_t slopay_chip_reg_t;
 typedef uint32_t slopay_chip_sample_t; /* 0xRRRRLLLL */
 
+typedef enum {
+  SLOPAY_CHIP_STEREO_MODE_MONO = 0,
+  SLOPAY_CHIP_STEREO_MODE_ABC,
+  SLOPAY_CHIP_STEREO_MODE_ACB
+} slopay_chip_stereo_mode_t;
+
 slopay_chip_t *slopay_chip_create(int clock_freq, int sample_rate);
 void slopay_chip_destroy(slopay_chip_t *chip);
 
@@ -56,7 +62,7 @@ uint8_t slopay_chip_read_register(slopay_chip_t *chip, slopay_chip_reg_t reg);
 
 slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *chip);
 void slopay_chip_set_volume(slopay_chip_t *chip, int volume);
-void slopay_chip_set_stereo(slopay_chip_t *chip, int stereo);
+void slopay_chip_set_stereo_mode(slopay_chip_t *chip, slopay_chip_stereo_mode_t mode);
 
 #ifdef __cplusplus
 }
