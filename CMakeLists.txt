@@ -10,6 +10,7 @@ add_executable(SlopAY
   slop-ay/slopay-z80.c
   lib/slopay-chip.c
   slop-ay/slopay-target-wave.c
+  slop-ay/slopay-target-midi.c
 )
 
 target_include_directories(SlopAY PRIVATE

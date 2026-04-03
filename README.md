@@ -21,7 +21,7 @@ The project builds two executables:
 ### SlopAY syntax
 
 ```text
-SlopAY [-v <percent>] [-b <percent>] [-m <mode>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] <ay_file>
+SlopAY [-v <percent>] [-b <percent>] [-m <mode>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>
 ```
 
 - `-v, --volume <percent>`: AY volume (0-100, default 100)
@@ -31,6 +31,8 @@ SlopAY [-v <percent>] [-b <percent>] [-m <mode>] [-p] [-s <song>] [-t <seconds>]
 - `-s, --song <song>`: 0-based song index from the AY file
 - `-t, --time <seconds>`: max playback time (`0` uses song length)
 - `-w, --wav <file.wav>`: write WAV instead of speaker output (requires finite duration from song length or `-t`)
+- `-M, --midi <file.mid>`: export AY + beeper notes to MIDI (requires finite duration from song length or `-t`)
+- `-B, --midi-beeper-channel <0-15>`: MIDI channel used for beeper notes in `--midi` export (default `3`)
 - `-h, --help`: show command help
 
 Examples:
@@ -38,6 +40,7 @@ Examples:
 ```text
 SlopAY ProjectAY/Spectrum/Demos/example.ay
 SlopAY -s 1 -t 60 -w out.wav ProjectAY/Spectrum/Games/example.ay
+SlopAY -s 0 -t 90 -M out.mid -B 10 ProjectAY/Spectrum/Demos/example.ay
 ```
 
 ### MIDIAY syntax

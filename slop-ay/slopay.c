@@ -18,6 +18,7 @@
 #include "slopay-chip.h"
 #include "slopay-target-macos.h"
 #include "slopay-target-wave.h"
+#include "slopay-target-midi.h"
 
 #define AY_BOOT_ADDR          (0x0000)
 #define AY_ISR_ADDR           (0x0038)
@@ -31,6 +32,11 @@
 #define Z80_CYCLES_PER_SAMPLE_FXP ((Z80_CLOCK_FREQ << Z80_CYCLE_FXP) / AY_SAMPLE_RATE)
 #define SLOPAY_BEEPER_ADD_AY_GAIN  (0.90f)
 #define SLOPAY_BEEPER_DUCK_AY_GAIN (0.60f)
+#define SLOPAY_MIDI_AY_CHANNELS      3
+#define SLOPAY_MIDI_BEEPER_VOICE_INDEX 3
+#define SLOPAY_MIDI_CHANNELS         4
+#define SLOPAY_MIDI_TICKS_PER_FRAME 1u
+#define SLOPAY_MIDI_VELOCITY       96
 
 typedef enum {
   SLOPAY_BEEPER_MIX_ADD = 0,
@@ -52,6 +58,12 @@ typedef struct {
   float             beeper_gain;
   slopay_beeper_mix_mode_t beeper_mix_mode;
   int               piano_roll_enabled;
+  int               midi_export_enabled;
+  slopay_target_midi_t midi_driver;
+  int               midi_notes[SLOPAY_MIDI_CHANNELS];
+  uint8_t           midi_beeper_channel;
+  uint32_t          midi_ticks_since_event;
+  unsigned          midi_beeper_toggle_count_last;
   unsigned          beeper_toggle_count_last;
   int               target_frames;
   int               played_frames;
@@ -244,6 +256,146 @@ static void slopay_ay_channel_note(slopay_chip_t *ay, int ch, char *out, size_t 
   }
 }
 
+static int slopay_ay_channel_midi_note(slopay_chip_t *ay, int ch)
+{
+  const uint8_t mixer = slopay_chip_read_register(ay, AY_REG_MIXER);
+  const uint8_t vol_reg = slopay_chip_read_register(ay, (slopay_chip_reg_t)(AY_REG_CHANNEL_A_VOLUME + ch));
+  const int tone_enabled = (mixer & (AY_MIXER_NO_TONE_A << ch)) == 0;
+  const int noise_enabled = (mixer & (AY_MIXER_NO_NOISE_A << ch)) == 0;
+  const int has_level = ((vol_reg & 0x10u) != 0) || ((vol_reg & 0x0Fu) > 0);
+
+  if (!has_level || (!tone_enabled && !noise_enabled))
+    return -1;
+
+  /* Noise-only output is not mapped to pitched MIDI notes. */
+  if (!tone_enabled && noise_enabled)
+    return -1;
+
+  {
+    const uint8_t fine = slopay_chip_read_register(ay, (slopay_chip_reg_t)(AY_REG_CHANNEL_A_FINE_PITCH + ch * 2));
+    const uint8_t coarse = slopay_chip_read_register(ay, (slopay_chip_reg_t)(AY_REG_CHANNEL_A_COARSE_PITCH + ch * 2));
+    const int period = fine | ((coarse & 0x0Fu) << 8);
+    if (period <= 0)
+      return -1;
+    return slopay_freq_to_midi((double)AY_CLOCK_FREQ / (16.0 * (double)period));
+  }
+}
+
+static void slopay_capture_midi_frame(slopay_io_t *io)
+{
+  uint32_t delta_ticks;
+
+  if (io == NULL || io->ay == NULL || !io->midi_export_enabled)
+    return;
+
+  delta_ticks = io->midi_ticks_since_event;
+  for (int ch = 0; ch < SLOPAY_MIDI_AY_CHANNELS; ch++) {
+    const int new_note = slopay_ay_channel_midi_note(io->ay, ch);
+    const int old_note = io->midi_notes[ch];
+
+    if (new_note == old_note)
+      continue;
+
+    if (old_note >= 0) {
+      if (slopay_target_midi_note_off(&io->midi_driver,
+                                      delta_ticks,
+                                      (uint8_t)ch,
+                                      (uint8_t)old_note,
+                                      0) != 0) {
+        fprintf(stderr, "Warning: MIDI export write failed; disabling MIDI capture\n");
+        io->midi_export_enabled = 0;
+        return;
+      }
+      delta_ticks = 0;
+    }
+
+    if (new_note >= 0) {
+      if (slopay_target_midi_note_on(&io->midi_driver,
+                                     delta_ticks,
+                                     (uint8_t)ch,
+                                     (uint8_t)new_note,
+                                     SLOPAY_MIDI_VELOCITY) != 0) {
+        fprintf(stderr, "Warning: MIDI export write failed; disabling MIDI capture\n");
+        io->midi_export_enabled = 0;
+        return;
+      }
+      delta_ticks = 0;
+    }
+
+    io->midi_notes[ch] = new_note;
+  }
+
+  {
+    const unsigned toggles = io->beeper_toggle_count - io->midi_beeper_toggle_count_last;
+    const double beeper_hz = (toggles > 0) ? ((double)toggles * AY_FRAME_RATE * 0.5) : 0.0;
+    const int new_note = slopay_freq_to_midi(beeper_hz);
+    const int old_note = io->midi_notes[SLOPAY_MIDI_BEEPER_VOICE_INDEX];
+
+    io->midi_beeper_toggle_count_last = io->beeper_toggle_count;
+
+    if (new_note != old_note) {
+      if (old_note >= 0) {
+        if (slopay_target_midi_note_off(&io->midi_driver,
+                                        delta_ticks,
+                                        io->midi_beeper_channel,
+                                        (uint8_t)old_note,
+                                        0) != 0) {
+          fprintf(stderr, "Warning: MIDI export write failed; disabling MIDI capture\n");
+          io->midi_export_enabled = 0;
+          return;
+        }
+        delta_ticks = 0;
+      }
+
+      if (new_note >= 0) {
+        if (slopay_target_midi_note_on(&io->midi_driver,
+                                       delta_ticks,
+                                       io->midi_beeper_channel,
+                                       (uint8_t)new_note,
+                                       SLOPAY_MIDI_VELOCITY) != 0) {
+          fprintf(stderr, "Warning: MIDI export write failed; disabling MIDI capture\n");
+          io->midi_export_enabled = 0;
+          return;
+        }
+        delta_ticks = 0;
+      }
+
+      io->midi_notes[SLOPAY_MIDI_BEEPER_VOICE_INDEX] = new_note;
+    }
+  }
+
+  io->midi_ticks_since_event = delta_ticks + SLOPAY_MIDI_TICKS_PER_FRAME;
+}
+
+static void slopay_finalize_midi_export(slopay_io_t *io)
+{
+  uint32_t delta_ticks;
+
+  if (io == NULL || !io->midi_export_enabled)
+    return;
+
+  delta_ticks = io->midi_ticks_since_event;
+  for (int ch = 0; ch < SLOPAY_MIDI_CHANNELS; ch++) {
+    if (io->midi_notes[ch] >= 0) {
+      if (slopay_target_midi_note_off(&io->midi_driver,
+                                      delta_ticks,
+                                      (uint8_t)ch,
+                                      (uint8_t)io->midi_notes[ch],
+                                      0) != 0) {
+        fprintf(stderr, "Warning: MIDI export write failed during finalize\n");
+        break;
+      }
+      io->midi_notes[ch] = -1;
+      delta_ticks = 0;
+    }
+  }
+
+  if (slopay_target_midi_cleanup(&io->midi_driver, delta_ticks) != 0)
+    fprintf(stderr, "Warning: Failed to finalize MIDI file\n");
+
+  io->midi_export_enabled = 0;
+}
+
 static void slopay_emit_piano_roll_frame(slopay_io_t *io)
 {
   char note_a[8];
@@ -295,6 +447,7 @@ static void render_audio(void *userdata, float *output, uint32_t frames)
 
       if (--io->samples_to_next_frame <= 0) {
         slopay_emit_piano_roll_frame(io);
+        slopay_capture_midi_frame(io);
         slopay_inject_interrupt(io->cpu);
         io->played_frames++;
         io->samples_to_next_frame += AY_SAMPLES_PER_FRAME;
@@ -473,8 +626,10 @@ static void slopay_run_z80(slopay_loader_file_t *file,
                            int beeper_volume_percent,
                            slopay_beeper_mix_mode_t beeper_mix_mode,
                            int piano_roll_enabled,
+                           int midi_beeper_channel,
                            int max_seconds,
-                           const char *wav_filename)
+                           const char *wav_filename,
+                           const char *midi_filename)
 {
   slopay_z80_t *cpu;
   slopay_io_t io;
@@ -532,6 +687,15 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     return;
   }
 
+  /* MIDI output also requires a known finite duration. */
+  if (midi_filename != NULL && frame_count == INT_MAX) {
+    fprintf(stderr, "Error: MIDI output requires a finite duration.\n"
+                    "       The song has no length field; use -t <seconds> to set one.\n");
+    slopay_chip_destroy(io.ay);
+    slopay_z80_destroy(cpu);
+    return;
+  }
+
   io.target_frames = frame_count;
   io.played_frames = 0;
   io.samples_to_next_frame = AY_SAMPLES_PER_FRAME;
@@ -539,7 +703,27 @@ static void slopay_run_z80(slopay_loader_file_t *file,
   io.beeper_gain = (float)beeper_volume_percent / 100.0f;
   io.beeper_mix_mode = beeper_mix_mode;
   io.piano_roll_enabled = piano_roll_enabled;
+  io.midi_export_enabled = 0;
+  io.midi_beeper_channel = (uint8_t)midi_beeper_channel;
+  io.midi_ticks_since_event = 0;
+  for (int ch = 0; ch < SLOPAY_MIDI_CHANNELS; ch++)
+    io.midi_notes[ch] = -1;
+  io.midi_beeper_toggle_count_last = 0;
   io.beeper_toggle_count_last = 0;
+
+  if (midi_filename != NULL) {
+    if (slopay_target_midi_init(&io.midi_driver, midi_filename) != 0) {
+      fprintf(stderr, "Error: Failed to open MIDI file '%s'\n", midi_filename);
+      slopay_chip_destroy(io.ay);
+      slopay_z80_destroy(cpu);
+      return;
+    }
+    io.midi_export_enabled = 1;
+    printf("Writing MIDI: %s  (%d frames, %.1f s at %d Hz, beeper channel=%u)\n",
+           midi_filename, frame_count,
+           (double)frame_count / AY_FRAME_RATE, AY_SAMPLE_RATE,
+           io.midi_beeper_channel);
+  }
 
   if (wav_filename != NULL) {
     /* ---- WAV file output mode ---------------------------------------- */
@@ -568,6 +752,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     /* ---- macOS Core Audio real-time output mode ----------------------- */
     if (slopay_target_macos_init(&io.audio_driver, AY_SAMPLE_RATE, render_audio, &io) != noErr) {
       fprintf(stderr, "Error: Failed to initialize macOS audio driver\n");
+      slopay_finalize_midi_export(&io);
       slopay_chip_destroy(io.ay);
       slopay_z80_destroy(cpu);
       return;
@@ -576,6 +761,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     if (slopay_target_macos_start(&io.audio_driver) != noErr) {
       fprintf(stderr, "Error: Failed to start macOS audio driver\n");
       slopay_target_macos_cleanup(&io.audio_driver);
+      slopay_finalize_midi_export(&io);
       slopay_chip_destroy(io.ay);
       slopay_z80_destroy(cpu);
       return;
@@ -594,6 +780,10 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     slopay_target_macos_stop(&io.audio_driver);
     audio_started = 0;
   }
+
+  slopay_finalize_midi_export(&io);
+  if (midi_filename != NULL)
+    printf("MIDI written: %s\n", midi_filename);
 
   printf("\nZ80 run complete: PC=0x%04X SP=0x%04X cycles=%u halted=%d OUTs=%u\n",
          cpu->regs.pc, cpu->regs.sp, cpu->cycles, cpu->regs.halted, io.total_out_count);
@@ -621,7 +811,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
 
 static void print_usage(const char *prog)
 {
-  printf("Usage: %s [-v <percent>] [-b <percent>] [-m <mode>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] <ay_file>\n", prog);
+  printf("Usage: %s [-v <percent>] [-b <percent>] [-m <mode>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>\n", prog);
   printf("\n");
   printf("Loads and displays information about an AY music file.\n");
   printf("\n");
@@ -637,6 +827,9 @@ static void print_usage(const char *prog)
   printf("                                  (0 = use song length; default: song length or Ctrl+C)\n");
   printf("  -w, --wav <file.wav>            Write output to WAV instead of playing through speakers\n");
   printf("                                  (requires a finite duration: song length or -t/--time)\n");
+  printf("  -M, --midi <file.mid>           Export AY + beeper notes to MIDI (format 0)\n");
+  printf("                                  (requires a finite duration: song length or -t/--time)\n");
+  printf("  -B, --midi-beeper-channel <0-15> MIDI channel for beeper notes (default 3)\n");
   printf("  -h, --help                      Show this help\n");
   printf("\n");
   printf("Arguments:\n");
@@ -677,8 +870,10 @@ static void print_song_info(slopay_loader_file_t *file,
                             int beeper_volume_percent,
                             slopay_beeper_mix_mode_t beeper_mix_mode,
                             int piano_roll_enabled,
+                            int midi_beeper_channel,
                             int max_seconds,
-                            const char *wav_filename)
+                            const char *wav_filename,
+                            const char *midi_filename)
 {
   slopay_loader_song_t *song;
   int block_idx = 0;
@@ -747,8 +942,10 @@ static void print_song_info(slopay_loader_file_t *file,
                  beeper_volume_percent,
                  beeper_mix_mode,
                  piano_roll_enabled,
+                 midi_beeper_channel,
                  max_seconds,
-                 wav_filename);
+                 wav_filename,
+                 midi_filename);
 
   slopay_loader_song_destroy(song);
 }
@@ -758,11 +955,13 @@ int main(int argc, char *argv[])
   slopay_loader_file_t *file;
   const char *ay_file_path = NULL;
   const char *wav_filename = NULL;
+  const char *midi_filename = NULL;
   int opt;
   int volume_percent = 100;
   int beeper_volume_percent = 22;
   slopay_beeper_mix_mode_t beeper_mix_mode = SLOPAY_BEEPER_MIX_ADD;
   int piano_roll_enabled = 0;
+  int midi_beeper_channel = 3;
   int max_seconds = 0;
   uint8_t song_index = 0;
   int have_song_index = 0;
@@ -780,10 +979,12 @@ int main(int argc, char *argv[])
     { "song",          required_argument, NULL, 's' },
     { "time",          required_argument, NULL, 't' },
     { "wav",           required_argument, NULL, 'w' },
+    { "midi",          required_argument, NULL, 'M' },
+    { "midi-beeper-channel", required_argument, NULL, 'B' },
     { NULL,             0,                 NULL,  0  }
   };
 
-  while ((opt = getopt_long(argc, argv, "hv:b:m:ps:t:w:", long_opts, NULL)) != -1) {
+  while ((opt = getopt_long(argc, argv, "hv:b:m:ps:t:w:M:B:", long_opts, NULL)) != -1) {
     switch (opt) {
     case 'h':
       print_usage(argv[0]);
@@ -834,6 +1035,17 @@ int main(int argc, char *argv[])
     case 'w':
       wav_filename = optarg;
       break;
+    case 'M':
+      midi_filename = optarg;
+      break;
+    case 'B':
+      parsed = strtol(optarg, &endptr, 10);
+      if (*optarg == '\0' || *endptr != '\0' || parsed < 0 || parsed > 15) {
+        fprintf(stderr, "Error: MIDI beeper channel must be an integer from 0 to 15\n");
+        return EXIT_FAILURE;
+      }
+      midi_beeper_channel = (int)parsed;
+      break;
     default:
       fprintf(stderr, "Error: Unknown or malformed option\n");
       print_usage(argv[0]);
@@ -860,6 +1072,10 @@ int main(int argc, char *argv[])
   printf("Beeper volume: %d%%\n", beeper_volume_percent);
   printf("Beeper mix: %s\n", slopay_beeper_mix_mode_name(beeper_mix_mode));
   printf("Piano roll: %s\n", piano_roll_enabled ? "on" : "off");
+  if (midi_filename != NULL) {
+    printf("MIDI export: %s\n", midi_filename);
+    printf("MIDI beeper channel: %d\n", midi_beeper_channel);
+  }
   file = slopay_loader_load_file(ay_file_path);
   if (file == NULL) {
     fprintf(stderr, "Error: Failed to load AY file\n");
@@ -886,8 +1102,10 @@ int main(int argc, char *argv[])
                     beeper_volume_percent,
                     beeper_mix_mode,
                     piano_roll_enabled,
+                    midi_beeper_channel,
                     max_seconds,
-                    wav_filename);
+                    wav_filename,
+                    midi_filename);
   } else if (file->num_songs > 0) {
     /* Display first song by default */
     print_song_info(file,
@@ -896,8 +1114,10 @@ int main(int argc, char *argv[])
                     beeper_volume_percent,
                     beeper_mix_mode,
                     piano_roll_enabled,
+                    midi_beeper_channel,
                     max_seconds,
-                    wav_filename);
+                    wav_filename,
+                    midi_filename);
   }
 
   /* Cleanup */
