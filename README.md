@@ -2,8 +2,14 @@ SlopAY & MIDIAY
 ===============
 
 SlopAY is a mostly vibe-coded AY player in C. It includes a Z80 emulator and support for loading AY files, rendering
-audio in real time on macOS, or exporting to WAV. It can also print a piano roll of the notes being played. It supports
-beeper mixing with configurable volume and mix mode.
+audio in real time on macOS, or exporting to WAV. It can also print a piano roll of the notes being played.
+
+**Supported formats and platforms:**
+- **ZX Spectrum 48K:** beeper-only tracks
+- **ZX Spectrum 128K:** AY chip tracks, and hybrid tracks combining AY with beeper
+- **Amstrad CPC:** AY chip tracks (with configurable interrupt rates)
+
+The player supports beeper mixing with configurable volume and mix mode.
 
 MIDIAY is a companion tool that provides an interactive shell for controlling the AY chip via MIDI input on macOS.
 
@@ -21,13 +27,15 @@ The project builds two executables:
 ### SlopAY syntax
 
 ```text
-SlopAY [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>
+SlopAY [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-P <machine>] [-I <50|300>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>
 ```
 
 - `-v, --volume <percent>`: AY volume (0-100, default 100)
 - `-b, --beeper-volume <percent>`, `--beeper <percent>`: beeper volume (0-100, default 22)
 - `-m, --beeper-mix <mode>`, `--mix <mode>`: beeper mix mode (`add` or `duck`, default `add`)
 - `-x, --stereo-mode <mode>`: stereo mode (`mono`, `abc`, or `acb`, default `abc`)
+- `-P, --machine <machine>`: timing profile (`spectrum` or `cpc`, default `spectrum`)
+- `-I, --cpc-rate <50|300>`: CPC interrupt-rate override (used only with `-P cpc`, default `50`)
 - `-p, --piano-roll`: print per-frame AY/Beeper notes
 - `-s, --song <song>`: 0-based song index from the AY file
 - `-t, --time <seconds>`: max playback time (`0` uses song length)
@@ -42,6 +50,8 @@ Examples:
 SlopAY ProjectAY/Spectrum/Demos/example.ay
 SlopAY -s 1 -t 60 -w out.wav ProjectAY/Spectrum/Games/example.ay
 SlopAY -x acb -t 30 -w out-acb.wav ProjectAY/Spectrum/Games/example.ay
+SlopAY -P cpc -t 30 -w out-cpc.wav ProjectAY/CPC/Games/example.ay
+SlopAY -P cpc -I 50 -t 30 -w out-cpc-50hz.wav ProjectAY/CPC/Games/example.ay
 SlopAY -s 0 -t 90 -M out.mid -B 10 ProjectAY/Spectrum/Demos/example.ay
 ```
 
