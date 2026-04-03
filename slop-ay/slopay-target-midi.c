@@ -5,27 +5,74 @@
 
 #include "slopay-target-midi.h"
 
+#include <stdarg.h>
 #include <string.h>
 
 #define SLOPAY_MIDI_PPQ      50
 #define SLOPAY_MIDI_TEMPO_US 1000000u /* 60 BPM => 1 tick = 1 frame at 50 Hz */
 
-static int midi_write_u16be(FILE *f, uint16_t v)
+/*
+ * fpack() - serialise values to a file (big-endian multi-byte fields).
+ *
+ * Format characters:
+ *   b   - uint8_t  (1 byte)
+ *   H   - uint16_t (2 bytes, big-endian)
+ *   I   - uint32_t (4 bytes, big-endian)
+ *   Ns  - const char * (N raw bytes; N is a decimal count prefix)
+ *
+ * Returns 0 on success, -1 on any write error.
+ */
+static int fpack(FILE *f, const char *fmt, ...)
 {
-  uint8_t b[2];
-  b[0] = (uint8_t)(v >> 8);
-  b[1] = (uint8_t)(v & 0xFFu);
-  return fwrite(b, 1, 2, f) == 2 ? 0 : -1;
-}
-
-static int midi_write_u32be(FILE *f, uint32_t v)
-{
+  va_list ap;
+  const char *p = fmt;
   uint8_t b[4];
-  b[0] = (uint8_t)(v >> 24);
-  b[1] = (uint8_t)(v >> 16);
-  b[2] = (uint8_t)(v >> 8);
-  b[3] = (uint8_t)(v & 0xFFu);
-  return fwrite(b, 1, 4, f) == 4 ? 0 : -1;
+  int ok = 1;
+
+  va_start(ap, fmt);
+  while (*p && ok) {
+    int count = 1;
+    if (*p >= '0' && *p <= '9') {
+      count = 0;
+      while (*p >= '0' && *p <= '9')
+        count = count * 10 + (*p++ - '0');
+    }
+    switch (*p++) {
+    case 'b': {
+      unsigned v = va_arg(ap, unsigned);
+      b[0] = (uint8_t)v;
+      if (fwrite(b, 1, 1, f) != 1) ok = 0;
+      break;
+    }
+    case 'H': {
+      unsigned v = va_arg(ap, unsigned);
+      b[0] = (uint8_t)(v >> 8);
+      b[1] = (uint8_t)(v & 0xFF);
+      if (fwrite(b, 1, 2, f) != 2) ok = 0;
+      break;
+    }
+    case 'I': {
+      uint32_t v = va_arg(ap, uint32_t);
+      b[0] = (uint8_t)(v >> 24);
+      b[1] = (uint8_t)(v >> 16);
+      b[2] = (uint8_t)(v >> 8);
+      b[3] = (uint8_t)(v & 0xFF);
+      if (fwrite(b, 1, 4, f) != 4) ok = 0;
+      break;
+    }
+    case 's': {
+      const char *src = va_arg(ap, const char *);
+      if (fwrite(src, 1, (size_t)count, f) != (size_t)count) ok = 0;
+      break;
+    }
+    default:
+      ok = 0;
+      break;
+    }
+  }
+  va_end(ap);
+
+  return ok ? 0 : -1;
 }
 
 static int midi_track_write(slopay_target_midi_t *driver, const uint8_t *data, size_t len)
@@ -70,9 +117,6 @@ static int midi_track_write_event(slopay_target_midi_t *driver,
 
 int slopay_target_midi_init(slopay_target_midi_t *driver, const char *filename)
 {
-  static const uint8_t mthd[4] = { 'M', 'T', 'h', 'd' };
-  static const uint8_t mtrk[4] = { 'M', 'T', 'r', 'k' };
-
   if (driver == NULL || filename == NULL)
     return -1;
 
@@ -81,19 +125,21 @@ int slopay_target_midi_init(slopay_target_midi_t *driver, const char *filename)
   if (driver->file == NULL)
     return -1;
 
-  if (fwrite(mthd, 1, sizeof(mthd), driver->file) != sizeof(mthd) ||
-      midi_write_u32be(driver->file, 6) != 0 ||
-      midi_write_u16be(driver->file, 0) != 0 ||
-      midi_write_u16be(driver->file, 1) != 0 ||
-      midi_write_u16be(driver->file, SLOPAY_MIDI_PPQ) != 0 ||
-      fwrite(mtrk, 1, sizeof(mtrk), driver->file) != sizeof(mtrk)) {
+  /* MThd chunk + MTrk chunk ID */
+  if (fpack(driver->file, "4sIHHH4s",
+            "MThd", (uint32_t)6,
+            (unsigned)0,              /* format 0       */
+            (unsigned)1,              /* 1 track        */
+            (unsigned)SLOPAY_MIDI_PPQ,
+            "MTrk") != 0) {
     fclose(driver->file);
     driver->file = NULL;
     return -1;
   }
 
+  /* Capture position of MTrk chunk size, then write placeholder */
   driver->track_size_offset = ftell(driver->file);
-  if (driver->track_size_offset < 0 || midi_write_u32be(driver->file, 0) != 0) {
+  if (driver->track_size_offset < 0 || fpack(driver->file, "I", (uint32_t)0) != 0) {
     fclose(driver->file);
     driver->file = NULL;
     return -1;
@@ -163,7 +209,7 @@ int slopay_target_midi_cleanup(slopay_target_midi_t *driver, uint32_t final_delt
 
   end_pos = ftell(driver->file);
   if (end_pos < 0 || fseek(driver->file, driver->track_size_offset, SEEK_SET) != 0 ||
-      midi_write_u32be(driver->file, driver->track_bytes) != 0 ||
+      fpack(driver->file, "I", driver->track_bytes) != 0 ||
       fseek(driver->file, end_pos, SEEK_SET) != 0) {
     fclose(driver->file);
     driver->file = NULL;

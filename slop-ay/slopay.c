@@ -20,17 +20,17 @@
 #include "slopay-target-wave.h"
 #include "slopay-target-midi.h"
 
-#define AY_BOOT_ADDR          (0x0000)
-#define AY_ISR_ADDR           (0x0038)
-#define SLOPAY_SAMPLE_RATE    (44100)
-#define Z80_CYCLE_FXP         (8)
-#define SLOPAY_BEEPER_ADD_AY_GAIN  (0.90f)
-#define SLOPAY_BEEPER_DUCK_AY_GAIN (0.60f)
-#define SLOPAY_MIDI_AY_CHANNELS      3
-#define SLOPAY_MIDI_BEEPER_VOICE_INDEX 3
-#define SLOPAY_MIDI_CHANNELS         4
-#define SLOPAY_MIDI_TICKS_PER_FRAME 1u
-#define SLOPAY_MIDI_VELOCITY       96
+#define AY_BOOT_ADDR (0x0000) /* AY player code is expected to be loaded at this address */
+#define AY_ISR_ADDR (0x0038) /* AY player interrupt service routine is expected to be at this address */
+#define SLOPAY_DEFAULT_SAMPLE_RATE (44100) /* Standard CD-quality sample rate */
+#define Z80_CYCLE_FXP (8) /* Fixed-point precision for Z80 cycle calculations */
+#define SLOPAY_BEEPER_ADD_AY_GAIN (0.90f) /* Beeper gain when mixed additively with AY output */
+#define SLOPAY_BEEPER_DUCK_AY_GAIN (0.60f) /* Beeper gain when ducking AY output */
+#define SLOPAY_MIDI_AY_CHANNELS 3 /* MIDI channels 0-2 correspond to AY channels A-C */
+#define SLOPAY_MIDI_BEEPER_VOICE_INDEX 3 /* MIDI channel index for beeper (if enabled) */
+#define SLOPAY_MIDI_CHANNELS 4 /* MIDI channels 0-2 for AY, 3 for beeper (if enabled) */
+#define SLOPAY_MIDI_TICKS_PER_FRAME 1u /* MIDI ticks per AY frame (assuming 50 Hz frame rate) */
+#define SLOPAY_MIDI_VELOCITY 96 /* Default MIDI velocity for note on events (0-127) */
 
 typedef enum {
   SLOPAY_BEEPER_MIX_ADD = 0,
@@ -55,44 +55,39 @@ typedef struct {
   int interrupt_rate;
 } slopay_machine_profile_t;
 
-static const slopay_machine_profile_t slopay_machine_profiles[] = {
-  { "spectrum", 3494400, 1773450, 50 },
-  { "cpc",      4000000, 1000000, 50 }
-};
-
 typedef struct {
-  slopay_z80_t       *cpu;
-  slopay_chip_t      *ay;
-  slopay_target_macos_t audio_driver;
-  uint8_t           selected_reg;
-  unsigned          total_out_count;
-  unsigned          ay_select_count;
-  unsigned          ay_write_count;
-  unsigned          beeper_out_count;
-  unsigned          beeper_toggle_count;
-  unsigned          other_out_count;
-  int               beeper_level;
-  float             beeper_gain;
-  slopay_beeper_mix_mode_t beeper_mix_mode;
-  int               piano_roll_enabled;
-  int               midi_export_enabled;
-  slopay_target_midi_t midi_driver;
-  int               midi_notes[SLOPAY_MIDI_CHANNELS];
-  uint8_t           midi_beeper_channel;
-  uint32_t          midi_ticks_since_event;
-  unsigned          midi_beeper_toggle_count_last;
-  unsigned          beeper_toggle_count_last;
-  int               ay_clock_freq;
-  int               frame_rate;
-  int               samples_per_frame;
-  int               z80_cycles_per_sample_fxp;
-  int               target_frames;
-  int               played_frames;
-  int               samples_to_next_frame;
-  int               z80_cycle_error_fxp;
-  slopay_machine_t  machine;
-  uint8_t           cpc_psg_control;
-  uint8_t           cpc_ppi_port_a;
+  slopay_z80_t             *cpu;
+  slopay_chip_t            *ay;
+  slopay_target_macos_t     audio_driver;
+  uint8_t                   selected_reg;
+  unsigned                  total_out_count;
+  unsigned                  ay_select_count;
+  unsigned                  ay_write_count;
+  unsigned                  beeper_out_count;
+  unsigned                  beeper_toggle_count;
+  unsigned                  other_out_count;
+  int                       beeper_level;
+  float                     beeper_gain;
+  slopay_beeper_mix_mode_t  beeper_mix_mode;
+  int                       piano_roll_enabled;
+  int                       midi_export_enabled;
+  slopay_target_midi_t      midi_driver;
+  int                       midi_notes[SLOPAY_MIDI_CHANNELS];
+  uint8_t                   midi_beeper_channel;
+  uint32_t                  midi_ticks_since_event;
+  unsigned                  midi_beeper_toggle_count_last;
+  unsigned                  beeper_toggle_count_last;
+  int                       ay_clock_freq;
+  int                       frame_rate;
+  int                       samples_per_frame;
+  int                       z80_cycles_per_sample_fxp;
+  int                       target_frames;
+  int                       played_frames;
+  int                       samples_to_next_frame;
+  int                       z80_cycle_error_fxp;
+  slopay_machine_t          machine;
+  uint8_t                   cpc_psg_control;
+  uint8_t                   cpc_ppi_port_a;
 } slopay_io_t;
 
 static float slopay_clamp_unit(float v)
@@ -108,20 +103,32 @@ static volatile sig_atomic_t slopay_stop_requested = 0;
 
 static const char *slopay_beeper_mix_mode_name(slopay_beeper_mix_mode_t mode)
 {
-  return mode == SLOPAY_BEEPER_MIX_DUCK ? "duck" : "add";
+  switch (mode) {
+  default:
+  case SLOPAY_BEEPER_MIX_ADD:  return "add";
+  case SLOPAY_BEEPER_MIX_DUCK: return "duck";
+  }
 }
 
 static const char *slopay_stereo_mode_name(slopay_stereo_mode_t mode)
 {
-  if (mode == SLOPAY_STEREO_MODE_MONO)
-    return "mono";
-  return mode == SLOPAY_STEREO_MODE_ACB ? "acb" : "abc";
+  switch (mode) {
+  default:
+  case SLOPAY_STEREO_MODE_MONO: return "mono";
+  case SLOPAY_STEREO_MODE_ABC:  return "abc";
+  case SLOPAY_STEREO_MODE_ACB:  return "acb";
+  }
 }
 
 static const slopay_machine_profile_t *slopay_machine_profile(slopay_machine_t machine)
 {
-  if (machine < 0 || machine > SLOPAY_MACHINE_CPC)
-    return &slopay_machine_profiles[SLOPAY_MACHINE_SPECTRUM];
+  static const slopay_machine_profile_t slopay_machine_profiles[] = {
+    { "spectrum", 3494400, 1773450, 50 },
+    { "cpc",      4000000, 1000000, 50 }
+  };
+
+  if (machine > SLOPAY_MACHINE_CPC)
+    machine = SLOPAY_MACHINE_SPECTRUM;
   return &slopay_machine_profiles[machine];
 }
 
@@ -130,62 +137,73 @@ static const char *slopay_machine_name(slopay_machine_t machine)
   return slopay_machine_profile(machine)->name;
 }
 
-static int slopay_parse_beeper_mix_mode(const char *text,
+#define NELEMS(x) (sizeof(x) / sizeof((x)[0]))
+
+static int slopay_parse_beeper_mix_mode(const char               *text,
                                         slopay_beeper_mix_mode_t *out_mode)
 {
-  if (text == NULL || out_mode == NULL)
-    return -1;
+  static const struct {
+    const char              *name;
+    slopay_beeper_mix_mode_t mode;
+  } mix_mode_map[] = {
+    { "add",      SLOPAY_BEEPER_MIX_ADD },
+    { "additive", SLOPAY_BEEPER_MIX_ADD },
+    { "duck",     SLOPAY_BEEPER_MIX_DUCK },
+    { "ducking",  SLOPAY_BEEPER_MIX_DUCK }
+  };
 
-  if (strcmp(text, "add") == 0 || strcmp(text, "additive") == 0) {
-    *out_mode = SLOPAY_BEEPER_MIX_ADD;
-    return 0;
-  }
-
-  if (strcmp(text, "duck") == 0 || strcmp(text, "ducking") == 0) {
-    *out_mode = SLOPAY_BEEPER_MIX_DUCK;
-    return 0;
-  }
+  if (text)
+    for (size_t i = 0; i < NELEMS(mix_mode_map); i++) {
+      if (strcasecmp(text, mix_mode_map[i].name) == 0) {
+        *out_mode = mix_mode_map[i].mode;
+        return 0;
+      }
+    }
 
   return -1;
 }
 
 static int slopay_parse_stereo_mode(const char *text, slopay_stereo_mode_t *out_mode)
 {
-  if (text == NULL || out_mode == NULL)
-    return -1;
+  static const struct {
+    const char           *name;
+    slopay_stereo_mode_t  mode;
+  } stereo_mode_map[] = {
+    { "mono", SLOPAY_STEREO_MODE_MONO },
+    { "abc",  SLOPAY_STEREO_MODE_ABC  },
+    { "acb",  SLOPAY_STEREO_MODE_ACB  }
+  };
 
-  if (strcmp(text, "abc") == 0) {
-    *out_mode = SLOPAY_STEREO_MODE_ABC;
-    return 0;
-  }
-
-  if (strcmp(text, "mono") == 0) {
-    *out_mode = SLOPAY_STEREO_MODE_MONO;
-    return 0;
-  }
-
-  if (strcmp(text, "acb") == 0) {
-    *out_mode = SLOPAY_STEREO_MODE_ACB;
-    return 0;
-  }
+  if (text)
+    for (size_t i = 0; i < NELEMS(stereo_mode_map); i++) {
+      if (strcasecmp(text, stereo_mode_map[i].name) == 0) {
+        *out_mode = stereo_mode_map[i].mode;
+        return 0;
+      }
+    }
 
   return -1;
 }
 
 static int slopay_parse_machine(const char *text, slopay_machine_t *out_machine)
 {
-  if (text == NULL || out_machine == NULL)
-    return -1;
+  static const struct {
+    const char      *name;
+    slopay_machine_t machine;
+  } machine_map[] = {
+    { "spectrum", SLOPAY_MACHINE_SPECTRUM },
+    { "zx",       SLOPAY_MACHINE_SPECTRUM },
+    { "cpc",      SLOPAY_MACHINE_CPC      },
+    { "amstrad",  SLOPAY_MACHINE_CPC      }
+  };
 
-  if (strcmp(text, "spectrum") == 0 || strcmp(text, "zx") == 0) {
-    *out_machine = SLOPAY_MACHINE_SPECTRUM;
-    return 0;
-  }
-
-  if (strcmp(text, "cpc") == 0 || strcmp(text, "amstrad") == 0) {
-    *out_machine = SLOPAY_MACHINE_CPC;
-    return 0;
-  }
+  if (text)
+    for (size_t i = 0; i < NELEMS(machine_map); i++) {
+      if (strcasecmp(text, machine_map[i].name) == 0) {
+        *out_machine = machine_map[i].machine;
+        return 0;
+      }
+    }
 
   return -1;
 }
@@ -344,9 +362,6 @@ static void slopay_midi_to_note_name(int midi, char *out, size_t out_size)
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
   };
 
-  if (out == NULL || out_size == 0)
-    return;
-
   if (midi < 0 || midi > 127) {
     snprintf(out, out_size, "---");
     return;
@@ -366,9 +381,6 @@ static void slopay_ay_channel_note(slopay_chip_t *ay,
   const int tone_enabled = (mixer & (AY_MIXER_NO_TONE_A << ch)) == 0;
   const int noise_enabled = (mixer & (AY_MIXER_NO_NOISE_A << ch)) == 0;
   const int has_level = ((vol_reg & 0x10u) != 0) || ((vol_reg & 0x0Fu) > 0);
-
-  if (out == NULL || out_size == 0)
-    return;
 
   if (!has_level || (!tone_enabled && !noise_enabled)) {
     snprintf(out, out_size, "---");
@@ -418,7 +430,7 @@ static void slopay_capture_midi_frame(slopay_io_t *io)
 {
   uint32_t delta_ticks;
 
-  if (io == NULL || io->ay == NULL || !io->midi_export_enabled)
+  if (!io->midi_export_enabled)
     return;
 
   delta_ticks = io->midi_ticks_since_event;
@@ -504,7 +516,7 @@ static void slopay_finalize_midi_export(slopay_io_t *io)
 {
   uint32_t delta_ticks;
 
-  if (io == NULL || !io->midi_export_enabled)
+  if (!io->midi_export_enabled)
     return;
 
   delta_ticks = io->midi_ticks_since_event;
@@ -538,7 +550,7 @@ static void slopay_emit_piano_roll_frame(slopay_io_t *io)
   const unsigned toggles = io->beeper_toggle_count - io->beeper_toggle_count_last;
   const double beeper_hz = (toggles > 0) ? ((double)toggles * io->frame_rate * 0.5) : 0.0;
 
-  if (!io->piano_roll_enabled || io->ay == NULL)
+  if (!io->piano_roll_enabled)
     return;
 
   slopay_ay_channel_note(io->ay, io->ay_clock_freq, 0, note_a, sizeof(note_a));
@@ -732,9 +744,10 @@ static void slopay_build_player_v3_memory(slopay_loader_song_t *song)
   }
 }
 
-static void slopay_load_song_blocks(slopay_loader_file_t *file, slopay_loader_song_t *song)
+static void slopay_load_song_blocks(const slopay_loader_file_t *file, slopay_loader_song_t *song)
 {
   int i;
+
   for (i = 0; song->blocks && song->blocks[i].address != 0; i++) {
     const uint32_t addr = song->blocks[i].address;
     uint32_t len = song->blocks[i].length;
@@ -999,7 +1012,7 @@ static void print_usage(const char *prog)
   printf("  ay_file        Path to the .ay music file\n");
 }
 
-static void print_file_info(slopay_loader_file_t *file)
+static void print_file_info(const slopay_loader_file_t *file)
 {
   printf("\n========== AY File Information ==========\n\n");
 
@@ -1048,7 +1061,7 @@ static void print_song_info(slopay_loader_file_t *file,
           ? cpc_rate_override
           : profile->interrupt_rate;
   slopay_loader_song_t *song;
-  int block_idx = 0;
+  int block_idx;
 
   if (song_index >= file->num_songs) {
     fprintf(stderr, "Error: Song index %d out of range (0-%d)\n",
@@ -1109,20 +1122,20 @@ static void print_song_info(slopay_loader_file_t *file,
 
   printf("\n");
 
-   slopay_run_z80(file,
-                  song,
-                  volume_percent,
-                  beeper_volume_percent,
-                  beeper_mix_mode,
-                  stereo_mode,
-                  machine,
-                  cpc_rate_override,
-                  piano_roll_enabled,
-                  midi_beeper_channel,
-                  max_seconds,
-                  sample_rate,
-                  wav_filename,
-                  midi_filename);
+  slopay_run_z80(file,
+                 song,
+                 volume_percent,
+                 beeper_volume_percent,
+                 beeper_mix_mode,
+                 stereo_mode,
+                 machine,
+                 cpc_rate_override,
+                 piano_roll_enabled,
+                 midi_beeper_channel,
+                 max_seconds,
+                 sample_rate,
+                 wav_filename,
+                 midi_filename);
 
   slopay_loader_song_destroy(song);
 }
@@ -1136,7 +1149,7 @@ int main(int argc, char *argv[])
   int opt;
   int volume_percent = 100;
   int beeper_volume_percent = 22;
-  int sample_rate = SLOPAY_SAMPLE_RATE;
+  int sample_rate = SLOPAY_DEFAULT_SAMPLE_RATE;
   slopay_beeper_mix_mode_t beeper_mix_mode = SLOPAY_BEEPER_MIX_ADD;
   slopay_stereo_mode_t stereo_mode = SLOPAY_STEREO_MODE_ABC;
   slopay_machine_t machine = SLOPAY_MACHINE_SPECTRUM;
@@ -1351,4 +1364,3 @@ int main(int argc, char *argv[])
 
   return EXIT_SUCCESS;
 }
-

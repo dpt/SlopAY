@@ -6,18 +6,72 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
 #include "slopay-loader.h"
 
-/* Helper: Read 16-bit big-endian value */
-static uint16_t read_be16(const uint8_t *data)
+/*
+ * unpack() - deserialise binary data with a simple format string.
+ *
+ * Format characters (all big-endian where applicable):
+ *   b   - uint8_t *  (1 byte)
+ *   H   - uint16_t * (2 bytes, unsigned)
+ *   h   - int16_t *  (2 bytes, signed)
+ *   Ns  - char *     (N raw bytes copied; N is a decimal count prefix)
+ *
+ * Returns the number of bytes consumed, or -1 on a bounds error.
+ */
+static int unpack(const uint8_t *data, size_t size, size_t offset,
+                  const char *fmt, ...)
 {
-  return (data[0] << 8) | data[1];
-}
+  va_list ap;
+  const char *p = fmt;
+  size_t pos = offset;
+  int ok = 1;
 
-/* Helper: Read signed 16-bit big-endian value */
-static int16_t read_be16_signed(const uint8_t *data)
-{
-  return (data[0] << 8) | data[1];
+  va_start(ap, fmt);
+  while (*p && ok) {
+    int count = 1;
+    if (*p >= '0' && *p <= '9') {
+      count = 0;
+      while (*p >= '0' && *p <= '9')
+        count = count * 10 + (*p++ - '0');
+    }
+    switch (*p++) {
+    case 'b': {
+      if (pos + 1 > size) { ok = 0; break; }
+      uint8_t *out = va_arg(ap, uint8_t *);
+      *out = data[pos++];
+      break;
+    }
+    case 'H': {
+      if (pos + 2 > size) { ok = 0; break; }
+      uint16_t *out = va_arg(ap, uint16_t *);
+      *out = (uint16_t)((data[pos] << 8) | data[pos + 1]);
+      pos += 2;
+      break;
+    }
+    case 'h': {
+      if (pos + 2 > size) { ok = 0; break; }
+      int16_t *out = va_arg(ap, int16_t *);
+      *out = (int16_t)((data[pos] << 8) | data[pos + 1]);
+      pos += 2;
+      break;
+    }
+    case 's': {
+      if (pos + (size_t)count > size) { ok = 0; break; }
+      char *out = va_arg(ap, char *);
+      memcpy(out, data + pos, (size_t)count);
+      pos += (size_t)count;
+      break;
+    }
+    default:
+      ok = 0;
+      break;
+    }
+  }
+  va_end(ap);
+
+  return ok ? (int)(pos - offset) : -1;
 }
 
 static size_t rel_ptr(size_t base, int16_t off)
@@ -100,23 +154,23 @@ slopay_loader_file_t *slopay_loader_load_file(const char *filename)
   }
 
   /* Parse header */
-  if (file->file_size < 20) {
+  if (unpack(file->file_data, file->file_size, 0,
+             "4s4sbbhhhbbh",
+             file->header.file_id,
+             file->header.type_id,
+             &file->header.file_version,
+             &file->header.player_version,
+             &file->header.p_special_player,
+             &file->header.p_author,
+             &file->header.p_misc,
+             &file->header.num_of_songs,
+             &file->header.first_song,
+             &file->header.p_songs_structure) < 0) {
     fprintf(stderr, "Error: File too small for AY header\n");
     free(file->file_data);
     free(file);
     return NULL;
   }
-
-  memcpy(file->header.file_id, &file->file_data[0], 4);
-  memcpy(file->header.type_id, &file->file_data[4], 4);
-  file->header.file_version = file->file_data[8];
-  file->header.player_version = file->file_data[9];
-  file->header.p_special_player = read_be16_signed(&file->file_data[10]);
-  file->header.p_author = read_be16_signed(&file->file_data[12]);
-  file->header.p_misc = read_be16_signed(&file->file_data[14]);
-  file->header.num_of_songs = file->file_data[16];
-  file->header.first_song = file->file_data[17];
-  file->header.p_songs_structure = read_be16_signed(&file->file_data[18]);
 
   /* Verify magic */
   if (memcmp(file->header.file_id, "ZXAY", 4) != 0) {
@@ -155,14 +209,14 @@ slopay_loader_file_t *slopay_loader_load_file(const char *filename)
     return NULL;
   }
 
-  /* Calculate actual song structure offset */
-  /* All offsets are relative to their position in the file */
-  int32_t base_offset = 18 + (int32_t)file->header.p_songs_structure;
-  size_t songs_base_offset = (size_t)base_offset;
-  size_t songs_offset = songs_base_offset;
+  size_t songs_offset = (size_t)(18 + (int32_t)file->header.p_songs_structure);
 
   for (int i = 0; i < file->num_songs; i++) {
-    if (songs_offset + 4 > file->file_size) {
+    int n = unpack(file->file_data, file->file_size, songs_offset,
+                   "hh",
+                   &file->songs[i].p_song_name,
+                   &file->songs[i].p_song_data);
+    if (n < 0) {
       fprintf(stderr, "Error: Invalid song structure offset\n");
       free(file->songs);
       free(file->author);
@@ -171,14 +225,8 @@ slopay_loader_file_t *slopay_loader_load_file(const char *filename)
       free(file);
       return NULL;
     }
-
-    file->songs[i].p_song_name = read_be16_signed(&file->file_data[songs_offset]);
-    file->songs[i].p_song_data = read_be16_signed(&file->file_data[songs_offset + 2]);
-
-    /* Store the offset of this song structure for later use */
     file->songs[i]._struct_offset = songs_offset;
-
-    songs_offset += 4;
+    songs_offset += (size_t)n;
   }
 
   return file;
@@ -226,36 +274,35 @@ slopay_loader_song_t *slopay_loader_load_song(slopay_loader_file_t *file, uint8_
   size_t song_struct_offset = file->songs[song_index]._struct_offset;
   data_offset = rel_ptr(song_struct_offset + 2, file->songs[song_index].p_song_data);
 
-  if (data_offset + 14 > file->file_size) {
+  /* Parse EMUL song data */
+  if (unpack(file->file_data, file->file_size, data_offset,
+             "bbbbHHbbhh",
+             &song->song_data.a_chan,
+             &song->song_data.b_chan,
+             &song->song_data.c_chan,
+             &song->song_data.noise_chan,
+             &song->song_data.song_length,
+             &song->song_data.fade_length,
+             &song->song_data.hi_reg,
+             &song->song_data.lo_reg,
+             &song->song_data.p_points,
+             &song->song_data.p_addresses) < 0) {
     fprintf(stderr, "Error: Invalid song data offset\n");
     slopay_loader_song_destroy(song);
     return NULL;
   }
-
-  /* Parse EMUL song data */
-  song->song_data.a_chan = file->file_data[data_offset];
-  song->song_data.b_chan = file->file_data[data_offset + 1];
-  song->song_data.c_chan = file->file_data[data_offset + 2];
-  song->song_data.noise_chan = file->file_data[data_offset + 3];
-  song->song_data.song_length = read_be16(&file->file_data[data_offset + 4]);
-  song->song_data.fade_length = read_be16(&file->file_data[data_offset + 6]);
-  song->song_data.hi_reg = file->file_data[data_offset + 8];
-  song->song_data.lo_reg = file->file_data[data_offset + 9];
-  song->song_data.p_points = read_be16_signed(&file->file_data[data_offset + 10]);
-  song->song_data.p_addresses = read_be16_signed(&file->file_data[data_offset + 12]);
 
   printf("Song length: %d/50s, Fade: %d/50s\n",
          song->song_data.song_length, song->song_data.fade_length);
 
   /* Load pointers */
   if (song->song_data.p_points != 0) {
-    size_t points_offset;
-    points_offset = rel_ptr(data_offset + 10, song->song_data.p_points);
-
-    if (points_offset + 6 <= file->file_size) {
-      song->pointers.stack = read_be16(&file->file_data[points_offset]);
-      song->pointers.init = read_be16(&file->file_data[points_offset + 2]);
-      song->pointers.interrupt = read_be16(&file->file_data[points_offset + 4]);
+    size_t points_offset = rel_ptr(data_offset + 10, song->song_data.p_points);
+    if (unpack(file->file_data, file->file_size, points_offset,
+               "HHH",
+               &song->pointers.stack,
+               &song->pointers.init,
+               &song->pointers.interrupt) >= 0) {
       printf("Stack: %04X, INIT: %04X, INTERRUPT: %04X\n",
              song->pointers.stack, song->pointers.init, song->pointers.interrupt);
     }
@@ -263,15 +310,13 @@ slopay_loader_song_t *slopay_loader_load_song(slopay_loader_file_t *file, uint8_
 
   /* Load data blocks */
   if (song->song_data.p_addresses != 0) {
-    size_t blocks_pos;
-    blocks_pos = rel_ptr(data_offset + 12, song->song_data.p_addresses);
+    size_t blocks_pos = rel_ptr(data_offset + 12, song->song_data.p_addresses);
 
-    /* Count blocks first */
+    /* Count blocks */
     size_t temp_pos = blocks_pos;
-    while (temp_pos + 6 <= file->file_size) {
-      uint16_t addr = read_be16(&file->file_data[temp_pos]);
-      if (addr == 0)
-        break;
+    uint16_t addr;
+    while (unpack(file->file_data, file->file_size, temp_pos, "H", &addr) >= 0) {
+      if (addr == 0) break;
       block_idx++;
       temp_pos += 6;
     }
@@ -281,12 +326,12 @@ slopay_loader_song_t *slopay_loader_load_song(slopay_loader_file_t *file, uint8_
       if (song->blocks) {
         block_idx = 0;
         temp_pos = blocks_pos;
-        while (temp_pos + 6 <= file->file_size) {
-          song->blocks[block_idx].address = read_be16(&file->file_data[temp_pos]);
-          if (song->blocks[block_idx].address == 0)
-            break;
-          song->blocks[block_idx].length = read_be16(&file->file_data[temp_pos + 2]);
-          song->blocks[block_idx].offset = read_be16_signed(&file->file_data[temp_pos + 4]);
+        while (unpack(file->file_data, file->file_size, temp_pos,
+                      "HHh",
+                      &song->blocks[block_idx].address,
+                      &song->blocks[block_idx].length,
+                      &song->blocks[block_idx].offset) >= 0) {
+          if (song->blocks[block_idx].address == 0) break;
           song->blocks[block_idx]._offset_base = temp_pos + 4;
           block_idx++;
           temp_pos += 6;
@@ -335,7 +380,4 @@ char *slopay_loader_get_song_name(slopay_loader_file_t *file, uint8_t index)
                       file->songs[index].p_song_name,
                       file->songs[index]._struct_offset, 256);
 }
-
-
-
 
