@@ -106,8 +106,8 @@ static uint16_t z80_port_from_bc(z80_t *cpu)
 }
 
 /* Generic handlers */
-static int z80_op_invalid(z80_t *cpu) { return 4; }
-static int z80_op_nop(z80_t *cpu) { return 4; }
+static int z80_op_invalid(z80_t *cpu) { (void)cpu; return 4; }
+static int z80_op_nop(z80_t *cpu) { (void)cpu; return 4; }
 
 static int z80_op_ld_rr_nn(z80_t *cpu, uint16_t *reg)
 {
@@ -117,12 +117,14 @@ static int z80_op_ld_rr_nn(z80_t *cpu, uint16_t *reg)
 
 static int z80_op_inc_rr(z80_t *cpu, uint16_t *reg)
 {
+  (void)cpu;
   (*reg)++;
   return 6;
 }
 
 static int z80_op_dec_rr(z80_t *cpu, uint16_t *reg)
 {
+  (void)cpu;
   (*reg)--;
   return 6;
 }
