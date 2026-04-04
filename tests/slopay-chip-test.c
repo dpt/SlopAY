@@ -1,6 +1,10 @@
 /* slopay-chip-test.c
  *
  * Basic unit tests for the AY chip core.
+ *
+ * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
+ *
+ * SPDX-License-Identifier: MIT
  */
 
 #include <stddef.h>

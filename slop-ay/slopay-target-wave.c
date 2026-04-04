@@ -138,7 +138,7 @@ static int16_t float_to_s16(float v)
 int slopay_target_wave_init(slopay_target_wave_t *driver,
                         const char       *filename,
                         int               sample_rate,
-                        slopay_target_wave_render_fn render,
+                        slopay_render_fn render,
                         void             *userdata)
 {
   if (driver == NULL || filename == NULL || render == NULL)

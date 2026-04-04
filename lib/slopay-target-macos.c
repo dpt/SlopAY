@@ -34,9 +34,9 @@ static OSStatus slopay_target_macos_callback(void                       *inRefCo
 }
 
 OSStatus slopay_target_macos_init(slopay_target_macos_t              *driver,
-                                  const int                           sample_rate,
-                                  const slopay_target_macos_render_fn render,
-                                  void                               *userdata)
+                                   const int                           sample_rate,
+                                   const slopay_render_fn              render,
+                                   void                               *userdata)
 {
   OSStatus                    result;
   AudioComponentDescription   desc;

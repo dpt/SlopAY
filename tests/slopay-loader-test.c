@@ -1,6 +1,10 @@
 /* slopay-loader-test.c
  *
  * Fixture-based tests for the AY file loader.
+ *
+ * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
+ *
+ * SPDX-License-Identifier: MIT
  */
 
 #include <stdint.h>
