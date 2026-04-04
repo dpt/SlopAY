@@ -52,4 +52,5 @@
 - [ ] Atari ST/YAMAHA YM2149 support.
   - This page talks about the differences from the YM https://maidavale.org/blog/ay-ym-differences/
 - [ ] BBC Micro/Texas Instruments SN76489 support.
+- [ ] MIDI source.
 
