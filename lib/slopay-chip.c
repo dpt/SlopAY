@@ -141,6 +141,30 @@ void slopay_chip_write_register(slopay_chip_t *ay, slopay_chip_reg_t reg, uint8_
   if (reg > 15)
     return;
 
+  switch (reg) {
+  case AY_REG_CHANNEL_A_COARSE_PITCH:
+  case AY_REG_CHANNEL_B_COARSE_PITCH:
+  case AY_REG_CHANNEL_C_COARSE_PITCH:
+    value &= 0x0Fu;
+    break;
+  case AY_REG_NOISE_PITCH:
+    value &= AY_NOISE_PITCH_MAX;
+    break;
+  case AY_REG_MIXER:
+    value &= 0x3Fu;
+    break;
+  case AY_REG_CHANNEL_A_VOLUME:
+  case AY_REG_CHANNEL_B_VOLUME:
+  case AY_REG_CHANNEL_C_VOLUME:
+    value &= 0x1Fu;
+    break;
+  case AY_REG_ENVELOPE_SHAPE:
+    value &= 0x0Fu;
+    break;
+  default:
+    break;
+  }
+
   ay->regs[reg] = value;
 
   /* Update internal state based on register changes */
