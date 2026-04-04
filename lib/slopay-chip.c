@@ -65,11 +65,12 @@ typedef struct {
 typedef aywave_t aytone_t;
 
 /* A noise generator
- * Uses a wave generator and outputs its phase modulated by an LFSR
- * random bit generator */
+ * Uses a wave generator clock plus a 17-bit LFSR and exposes the
+ * current noise output bit directly. */
 typedef struct {
   aywave_t      wave;
   unsigned int  lfsr; /* state, shift register */
+  int           output;
 } aynoise_t;
 
 /* An envelope generator
@@ -117,6 +118,7 @@ slopay_chip_t *slopay_chip_create(int clock_freq, int sample_rate)
 
   /* Initialise noise (lfsr never becomes zero) */
   ay->noise.lfsr = 1;
+  ay->noise.output = 1;
 
   /* Set default configuration */
   ay->mixer.master_volume = 100;
@@ -225,7 +227,7 @@ static void ay_noise_halfclock(aynoise_t *n)
     /* 17-bit Fibonacci LFSR with taps on bits 0 and 3 */
     lfsr = n->lfsr;
     n->lfsr = (lfsr >> 1) | ((((lfsr >> 0) & 1) ^ ((lfsr >> 3) & 1)) << 16);
-    n->wave.phase += (n->lfsr & 1);
+    n->output = (int)(n->lfsr & 1u);
   }
 }
 
@@ -338,7 +340,7 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
     const int tone_disabled = (mixer_reg & (AY_MIXER_NO_TONE_A << ch)) != 0;
     const int noise_disabled = (mixer_reg & (AY_MIXER_NO_NOISE_A << ch)) != 0;
     const int tone_high = (ay->tone[ch].phase & 1) != 0;
-    const int noise_high = (ay->noise.wave.phase & 1) != 0;
+    const int noise_high = ay->noise.output != 0;
 
     /*
      * AY mixer bits are active-low masks. A disabled tone/noise source does
