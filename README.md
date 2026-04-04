@@ -112,18 +112,39 @@ MIDIAY
 
 `MIDIAY` starts an interactive shell with CoreMIDI/CoreAudio input and AY control commands.
 
-REPL command syntax:
+#### Command mode
 
-- `<reg> <value>`: write AY register directly (reg `0-15`, value `0-255`)
-- `A`..`G`: hold a note
-- `.`: stop all notes
-- `s`: set envelope shape
-- `p`: set envelope period
+- `<reg> <value>`: write AY register directly (reg `0–15`, value `0–255`)
+- `p`: enter play mode (see below)
+- `s`: cycle envelope shape
+- `o`: cycle envelope period
 - `v <0-127>`: set channel volume (MIDI scale)
 - `m <0-100>`: set master volume percent
 - `r`: cycle reverb delay
-- `t`: cycle stereo mode (`mono` -> `abc` -> `acb`)
+- `t`: cycle stereo mode (`mono` → `abc` → `acb`)
+- `.`: stop all notes
 - `q`: quit
+
+#### Play mode
+
+Play mode accepts single-keypress note input without requiring Enter.
+
+Key layout (one octave, matches a physical keyboard row):
+
+```text
+ W  E     T  Y  U
+A  S  D  F  G  H  J
+C  D  E  F  G  A  B
+```
+
+Controls:
+
+- `A S D F G H J`: play C D E F G A B
+- `W E T Y U`: play the adjacent sharps (C♯ D♯ F♯ G♯ A♯)
+- `Z` / `X`: octave down / up
+- `[` / `]`: shorten / lengthen note hold time (50 ms steps, range 50–2000 ms, default 200 ms)
+- `Space`: stop all current notes immediately
+- `Q`: return to command mode
 
 Links
 -----

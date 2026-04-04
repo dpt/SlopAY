@@ -168,20 +168,20 @@ int slopay_target_wave_init(slopay_target_wave_t *driver,
 int slopay_target_wave_render_all(slopay_target_wave_t *driver, uint32_t total_samples)
 {
   /* Two local buffers kept on the stack; each is under 4 kB. */
-  float   float_buf[WAV_RENDER_CHUNK * WAV_CHANNELS];
-  int16_t s16_buf[WAV_RENDER_CHUNK * WAV_CHANNELS];
+  float     float_buf[WAV_RENDER_CHUNK * WAV_CHANNELS];
+  int16_t   s16_buf[WAV_RENDER_CHUNK * WAV_CHANNELS];
 
-  uint32_t done     = 0;
-  int      last_pct = -1;
+  uint32_t  done     = 0;
+  int       last_pct = -1;
 
   if (driver == NULL || driver->file == NULL || driver->render == NULL)
     return -1;
 
   while (done < total_samples) {
-    uint32_t chunk = WAV_RENDER_CHUNK;
-    size_t expected;
-    uint32_t i;
-    int      pct;
+    uint32_t  chunk    = WAV_RENDER_CHUNK;
+    size_t    expected;
+    uint32_t  i;
+    int       pct;
 
     if (done + chunk > total_samples)
       chunk = total_samples - done;

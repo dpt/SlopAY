@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <math.h>
+#include <termios.h>
+#include <unistd.h>
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreMIDI/CoreMIDI.h>
@@ -53,6 +55,14 @@
 /* ----------------------------------------------------------------------- */
 
 #define DIV_NEAREST(a,b) (((a) + (b) / 2) / (b))
+
+#define PLAY_MODE_NOTE_MS_DEFAULT  (200)
+#define PLAY_MODE_NOTE_MS_MIN       (50)
+#define PLAY_MODE_NOTE_MS_MAX     (2000)
+#define PLAY_MODE_NOTE_MS_STEP      (50)
+#define PLAY_MODE_DEFAULT_OCT        (4)
+#define PLAY_MODE_MIN_OCT            (0)
+#define PLAY_MODE_MAX_OCT            (8)
 
 /* ----------------------------------------------------------------------- */
 
@@ -137,6 +147,60 @@ static int parse_master_volume_command(const char *input, int *value_out)
 
   *value_out = (int)value;
   return 1;
+}
+
+static int play_mode_semitone_for_key(const int key)
+{
+  switch (key) {
+  case 'A': return 0;  /* C */
+  case 'W': return 1;  /* C# */
+  case 'S': return 2;  /* D */
+  case 'E': return 3;  /* D# */
+  case 'D': return 4;  /* E */
+  case 'F': return 5;  /* F */
+  case 'T': return 6;  /* F# */
+  case 'G': return 7;  /* G */
+  case 'Y': return 8;  /* G# */
+  case 'H': return 9;  /* A */
+  case 'U': return 10; /* A# */
+  case 'J': return 11; /* B */
+  default:
+    return -1;
+  }
+}
+
+static int terminal_enable_raw_mode(struct termios *saved)
+{
+  struct termios raw;
+
+  if (saved == NULL)
+    return -1;
+  if (tcgetattr(STDIN_FILENO, saved) != 0)
+    return -1;
+
+  raw = *saved;
+  raw.c_lflag &= (tcflag_t)~(ICANON | ECHO);
+  raw.c_cc[VMIN]  = 1;
+  raw.c_cc[VTIME] = 0;
+
+  return tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+}
+
+static void terminal_restore_mode(const struct termios *saved)
+{
+  if (saved != NULL)
+    tcsetattr(STDIN_FILENO, TCSANOW, saved);
+}
+
+static int read_single_key(int *key)
+{
+  unsigned char ch;
+  const ssize_t n = read(STDIN_FILENO, &ch, 1);
+
+  if (n != 1)
+    return -1;
+  *key = (int)ch;
+  return 0;
 }
 
 /* ----------------------------------------------------------------------- */
@@ -417,19 +481,99 @@ static void teardownMIDI(void)
   }
 }
 
+static void run_play_mode(void)
+{
+  struct termios saved;
+  int            play_octave   = PLAY_MODE_DEFAULT_OCT;
+  int            note_ms       = PLAY_MODE_NOTE_MS_DEFAULT;
+
+  printf("Play mode: A S D F G H J = C D E F G A B, W E T Y U = sharps\n");
+  printf("           Z/X = octave down/up, [/] = shorter/longer hold, Space = stop all, Q = return\n");
+  printf("Octave: %d  Hold: %dms\n", play_octave, note_ms);
+
+  if (terminal_enable_raw_mode(&saved) != 0) {
+    printf("Failed to enter raw input mode\n");
+    return;
+  }
+
+  for (;;) {
+    int key;
+    int semitone;
+    int note;
+
+    if (read_single_key(&key) != 0)
+      break;
+    if (key >= 'a' && key <= 'z')
+      key -= ('a' - 'A');
+
+    if (key == 'Q')
+      break;
+    if (key == ' ') {
+      key_release_all();
+      continue;
+    }
+    if (key == 'Z') {
+      if (play_octave > PLAY_MODE_MIN_OCT) {
+        play_octave--;
+        printf("\rOctave: %d  Hold: %dms\n", play_octave, note_ms);
+      }
+      continue;
+    }
+    if (key == 'X') {
+      if (play_octave < PLAY_MODE_MAX_OCT) {
+        play_octave++;
+        printf("\rOctave: %d  Hold: %dms\n", play_octave, note_ms);
+      }
+      continue;
+    }
+    if (key == '[') {
+      if (note_ms > PLAY_MODE_NOTE_MS_MIN) {
+        note_ms -= PLAY_MODE_NOTE_MS_STEP;
+        if (note_ms < PLAY_MODE_NOTE_MS_MIN)
+          note_ms = PLAY_MODE_NOTE_MS_MIN;
+        printf("\rOctave: %d  Hold: %dms\n", play_octave, note_ms);
+      }
+      continue;
+    }
+    if (key == ']') {
+      if (note_ms < PLAY_MODE_NOTE_MS_MAX) {
+        note_ms += PLAY_MODE_NOTE_MS_STEP;
+        if (note_ms > PLAY_MODE_NOTE_MS_MAX)
+          note_ms = PLAY_MODE_NOTE_MS_MAX;
+        printf("\rOctave: %d  Hold: %dms\n", play_octave, note_ms);
+      }
+      continue;
+    }
+
+    semitone = play_mode_semitone_for_key(key);
+    if (semitone < 0)
+      continue;
+
+    note = (play_octave + 1) * 12 + semitone;
+
+    key_hold(note);
+    usleep((useconds_t)note_ms * 1000u);
+    key_release(note);
+  }
+
+  key_release_all();
+  terminal_restore_mode(&saved);
+  printf("\nExited play mode\n");
+}
+
 /* ----------------------------------------------------------------------- */
 
 static void repl(void)
 {
   char input[100];
-  int  reg, val, volume_value, master_volume_value;
-  int  cmd;
+  int reg, val, volume_value, master_volume_value;
+  int cmd;
 
   printf("Enter register and value (e.g., '0 128' for reg 0, value 128) to program AY\n");
-  printf("Enter a note A..G to play (holding), or '.' to stop all notes\n");
+  printf("Enter 'p' for play mode (single keypress notes)\n");
   printf("Enter 'v <0-127>' to set channel volume from MIDI scale\n");
   printf("Enter 'm <0-100>' to set master volume percent\n");
-  printf("Enter 's' to set envelope shape, 'p' to set envelope period, 'r' to set reverb delay, 't' to cycle stereo mode (mono/abc/acb) or 'q' to quit\n");
+  printf("Enter 's' to set envelope shape, 'o' to set envelope period, 'r' to set reverb delay, 't' to cycle stereo mode (mono/abc/acb), '.' to stop all notes, or 'q' to quit\n");
 
   for (;;) {
     printf("Command> ");
@@ -445,6 +589,8 @@ static void repl(void)
     } else if (cmd == 'S') {
       setenvshape();
     } else if (cmd == 'P') {
+      run_play_mode();
+    } else if (cmd == 'O') {
       setenvperiod();
     } else if (cmd == 'R') {
       static size_t delay = SAMPLE_RATE;
@@ -456,8 +602,6 @@ static void repl(void)
       printf("Set reverb delay to %zu samples (%.2f ms)\n", delay, (double)delay / SAMPLE_RATE * 1000);
     } else if (cmd == 'T') {
       cyclestereomode();
-    } else if (cmd >= 'A' && cmd <= 'G') {
-      key_hold(MIDI_A4 + cmd - 'A');
     } else if (cmd == '.') {
       key_release_all();
     } else if (parse_master_volume_command(input, &master_volume_value)) {

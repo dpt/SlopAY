@@ -57,10 +57,10 @@ typedef enum {
 } slopay_machine_t;
 
 typedef struct {
-  const char *name;
-  int z80_clock_freq;
-  int ay_clock_freq;
-  int interrupt_rate;
+  const char              *name;
+  int                      z80_clock_freq;
+  int                      ay_clock_freq;
+  int                      interrupt_rate;
 } slopay_machine_profile_t;
 
 typedef struct {
