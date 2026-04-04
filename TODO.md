@@ -53,4 +53,5 @@
   - This page talks about the differences from the YM https://maidavale.org/blog/ay-ym-differences/
 - [ ] BBC Micro/Texas Instruments SN76489 support.
 - [ ] MIDI source.
+- [ ] Is volume scaling correct? CHQ's volume seems all over the place.
 

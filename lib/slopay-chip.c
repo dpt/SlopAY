@@ -86,8 +86,7 @@ typedef struct {
 
 /* A mixer */
 typedef struct {
-  int           master_volume; /* 0..100 */
-  int           stereo;        /* 0=mono, 1=stereo */
+  int                       master_volume; /* 0..100 */
   slopay_chip_stereo_mode_t stereo_mode;
 } aymixer_t;
 
@@ -124,7 +123,6 @@ slopay_chip_t *slopay_chip_create(int clock_freq, int sample_rate)
 
   /* Set default configuration */
   ay->mixer.master_volume = 100;
-  ay->mixer.stereo = 1; /* Enable stereo by default */
   ay->mixer.stereo_mode = SLOPAY_CHIP_STEREO_MODE_ABC;
 
   return ay;
@@ -140,36 +138,30 @@ void slopay_chip_destroy(slopay_chip_t *ay)
 /* Set a register value */
 void slopay_chip_write_register(slopay_chip_t *ay, slopay_chip_reg_t reg, uint8_t value)
 {
+  static const uint8_t reg_masks[16] = {
+    [AY_REG_CHANNEL_A_FINE_PITCH]     = 0xFFu,
+    [AY_REG_CHANNEL_A_COARSE_PITCH]   = 0x0Fu,
+    [AY_REG_CHANNEL_B_FINE_PITCH]     = 0xFFu,
+    [AY_REG_CHANNEL_B_COARSE_PITCH]   = 0x0Fu,
+    [AY_REG_CHANNEL_C_FINE_PITCH]     = 0xFFu,
+    [AY_REG_CHANNEL_C_COARSE_PITCH]   = 0x0Fu,
+    [AY_REG_NOISE_PITCH]              = AY_NOISE_PITCH_MAX,
+    [AY_REG_MIXER]                    = 0x3Fu,
+    [AY_REG_CHANNEL_A_VOLUME]         = 0x1Fu,
+    [AY_REG_CHANNEL_B_VOLUME]         = 0x1Fu,
+    [AY_REG_CHANNEL_C_VOLUME]         = 0x1Fu,
+    [AY_REG_ENVELOPE_FINE_DURATION]   = 0xFFu,
+    [AY_REG_ENVELOPE_COARSE_DURATION] = 0xFFu,
+    [AY_REG_ENVELOPE_SHAPE]           = 0x0Fu,
+  };
+
   int channel;
 
-  if (reg > 15)
+  if (reg > AY_REG_ENVELOPE_SHAPE)
     return;
 
-  switch (reg) {
-  case AY_REG_CHANNEL_A_COARSE_PITCH:
-  case AY_REG_CHANNEL_B_COARSE_PITCH:
-  case AY_REG_CHANNEL_C_COARSE_PITCH:
-    value &= 0x0Fu;
-    break;
-  case AY_REG_NOISE_PITCH:
-    value &= AY_NOISE_PITCH_MAX;
-    break;
-  case AY_REG_MIXER:
-    value &= 0x3Fu;
-    break;
-  case AY_REG_CHANNEL_A_VOLUME:
-  case AY_REG_CHANNEL_B_VOLUME:
-  case AY_REG_CHANNEL_C_VOLUME:
-    value &= 0x1Fu;
-    break;
-  case AY_REG_ENVELOPE_SHAPE:
-    value &= 0x0Fu;
-    break;
-  default:
-    break;
-  }
-
-  ay->regs[reg] = value;
+  /* Mask incoming values to valid ranges for each register */
+  ay->regs[reg] = value & reg_masks[reg];
 
   /* Update internal state based on register changes */
   switch (reg) {
@@ -300,15 +292,15 @@ static void ay_fixup_tone(aytone_t *l, const aytone_t *r)
 
 slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
 {
-  int     total_clocks_fxp;
-  int     whole_clocks;
-  int     t;
-  int     ch;
-  uint8_t mixer_reg;
-  int16_t mixed[AY_CHANNELS];
-  int     channel_active[AY_CHANNELS];
-  int     output_l, output_r; /* these hold multiple channels */
-  int     final_l, final_r;
+  int      total_clocks_fxp;
+  int      whole_clocks;
+  int      t;
+  int      ch;
+  uint8_t  mixer_reg;
+  int16_t  mixed[AY_CHANNELS];
+  unsigned channel_active;
+  int      output_l, output_r; /* these hold multiple channels */
+  int      final_l, final_r;
 
   total_clocks_fxp = ay->clocks_per_sample + ay->clock_error;
   whole_clocks = total_clocks_fxp >> (AY_FXP + 4); /* + 4 is the 16 divider */
@@ -335,26 +327,24 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
 
   mixer_reg = ay->regs[AY_REG_MIXER];
 
+  channel_active = 0;
   for (ch = 0; ch < AY_CHANNELS; ch++) {
-    int output;
-    int vol;
-    int amplitude;
-    const int tone_disabled = (mixer_reg & (AY_MIXER_NO_TONE_A << ch)) != 0;
-    const int noise_disabled = (mixer_reg & (AY_MIXER_NO_NOISE_A << ch)) != 0;
-    const int tone_high = (ay->tone[ch].phase & 1) != 0;
-    const int noise_high = ay->noise.output != 0;
-
     /*
      * AY mixer bits are active-low masks. A disabled tone/noise source does
      * not mute the channel; it forces that gate high. This matters for
      * sampled speech and other DAC-style tricks that drive output primarily
      * through rapid volume-register updates.
      */
-    output = +1;
-    if (!tone_disabled && !tone_high)
-      output = -1;
-    if (!noise_disabled && !noise_high)
-      output = -1;
+    const int tone_disabled  = (mixer_reg & (AY_MIXER_NO_TONE_A  << ch)) != 0;
+    const int noise_disabled = (mixer_reg & (AY_MIXER_NO_NOISE_A << ch)) != 0;
+    const int tone_high      = (ay->tone[ch].phase & 1) != 0;
+    const int noise_high     = (ay->noise.output)       != 0;
+
+    int output;
+    int vol;
+    int amplitude;
+
+    output = ((tone_disabled || tone_high) && (noise_disabled || noise_high)) ? +1 : -1;
 
     vol = ay->regs[AY_REG_CHANNEL_A_VOLUME + ch];
     if (vol < 16)
@@ -365,59 +355,59 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
       amplitude = ay->env.volume * 32767 / AY_ENV_MAX_VOL;
 
     mixed[ch] = (output > 0) ? amplitude : -amplitude;
-    channel_active[ch] = (amplitude > 0);
+    if (amplitude)
+      channel_active |= 1 << ch;
   }
 
-  if (ay->mixer.stereo && ay->mixer.stereo_mode != SLOPAY_CHIP_STEREO_MODE_MONO) {
-    int left_sum = 0;
-    int right_sum = 0;
-    int left_count = 0;
+  if (ay->mixer.stereo_mode != SLOPAY_CHIP_STEREO_MODE_MONO) {
+    int left_sum    = 0;
+    int right_sum   = 0;
+    int left_count  = 0;
     int right_count = 0;
 
     /* Right channel is always B + C in both stereo modes. */
-    if (channel_active[1]) {
+    if (channel_active & 2) {
       right_sum += mixed[1];
       right_count++;
     }
-    if (channel_active[2]) {
+    if (channel_active & 4) {
       right_sum += mixed[2];
       right_count++;
     }
 
     if (ay->mixer.stereo_mode == SLOPAY_CHIP_STEREO_MODE_ACB) {
       /* ACB: left = A + C */
-      if (channel_active[0]) {
+      if (channel_active & 1) {
         left_sum += mixed[0];
         left_count++;
       }
-      if (channel_active[2]) {
+      if (channel_active & 4) {
         left_sum += mixed[2];
         left_count++;
       }
     } else {
       /* ABC: left = A + B */
-      if (channel_active[0]) {
+      if (channel_active & 1) {
         left_sum += mixed[0];
         left_count++;
       }
-      if (channel_active[1]) {
+      if (channel_active & 2) {
         left_sum += mixed[1];
         left_count++;
       }
     }
 
-    output_l = (left_count > 0) ? (left_sum / left_count) : 0;
+    output_l = (left_count  > 0) ? (left_sum  / left_count)  : 0;
     output_r = (right_count > 0) ? (right_sum / right_count) : 0;
   } else {
-    int mono_sum = 0;
+    int mono_sum   = 0;
     int mono_count = 0;
 
-    for (ch = 0; ch < AY_CHANNELS; ch++) {
-      if (channel_active[ch]) {
+    for (ch = 0; ch < AY_CHANNELS; ch++)
+      if (channel_active & (1u << ch)) {
         mono_sum += mixed[ch];
         mono_count++;
       }
-    }
 
     output_l = output_r = (mono_count > 0) ? (mono_sum / mono_count) : 0;
   }
@@ -440,8 +430,5 @@ void slopay_chip_set_volume(slopay_chip_t *ay, int volume)
 
 void slopay_chip_set_stereo_mode(slopay_chip_t *ay, slopay_chip_stereo_mode_t mode)
 {
-  if (mode > SLOPAY_CHIP_STEREO_MODE_ACB)
-    mode = SLOPAY_CHIP_STEREO_MODE_ABC;
-  ay->mixer.stereo_mode = mode;
-  ay->mixer.stereo = (mode == SLOPAY_CHIP_STEREO_MODE_MONO) ? 0 : 1;
+  ay->mixer.stereo_mode = (mode > SLOPAY_CHIP_STEREO_MODE_ACB) ? SLOPAY_CHIP_STEREO_MODE_ABC : mode;
 }
