@@ -3,7 +3,6 @@
  * Fixture-based tests for the AY file loader.
  */
 
-#include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +10,16 @@
 #include <unistd.h>
 
 #include "slopay-loader.h"
+
+static void expect_true(int condition, const char *expression, const char *file, int line)
+{
+  if (!condition) {
+    fprintf(stderr, "Expectation failed: %s (%s:%d)\n", expression, file, line);
+    abort();
+  }
+}
+
+#define EXPECT(expr) expect_true((expr), #expr, __FILE__, __LINE__)
 
 static int write_fixture_file(const char *path)
 {
@@ -70,48 +79,48 @@ static void test_loader_fixture(void)
   slopay_loader_song_t *song;
   char *song_name;
 
-  assert(fd >= 0);
+  EXPECT(fd >= 0);
   close_result = close(fd);
-  assert(close_result == 0);
+  EXPECT(close_result == 0);
 
-  assert(write_fixture_file(path) == 0);
+  EXPECT(write_fixture_file(path) == 0);
 
   file = slopay_loader_load_file(path);
-  assert(file != NULL);
-  assert(file->header.file_version == 1);
-  assert(file->header.player_version == 3);
-  assert(slopay_loader_get_num_songs(file) == 1);
-  assert(strcmp(slopay_loader_get_author(file), "Tester") == 0);
-  assert(strcmp(slopay_loader_get_misc_info(file), "Fixture") == 0);
+  EXPECT(file != NULL);
+  EXPECT(file->header.file_version == 1);
+  EXPECT(file->header.player_version == 3);
+  EXPECT(slopay_loader_get_num_songs(file) == 1);
+  EXPECT(strcmp(slopay_loader_get_author(file), "Tester") == 0);
+  EXPECT(strcmp(slopay_loader_get_misc_info(file), "Fixture") == 0);
 
   song_name = slopay_loader_get_song_name(file, 0);
-  assert(song_name != NULL);
-  assert(strcmp(song_name, "Unit Tune") == 0);
+  EXPECT(song_name != NULL);
+  EXPECT(strcmp(song_name, "Unit Tune") == 0);
 
   song = slopay_loader_load_song(file, 0);
-  assert(song != NULL);
-  assert(strcmp(song->name, "Unit Tune") == 0);
-  assert(song->song_data.a_chan == 1);
-  assert(song->song_data.b_chan == 2);
-  assert(song->song_data.c_chan == 3);
-  assert(song->song_data.noise_chan == 4);
-  assert(song->song_data.song_length == 100);
-  assert(song->song_data.fade_length == 20);
-  assert(song->song_data.hi_reg == 0x12);
-  assert(song->song_data.lo_reg == 0x34);
-  assert(song->pointers.stack == 0x8000);
-  assert(song->pointers.init == 0x1234);
-  assert(song->pointers.interrupt == 0x5678);
-  assert(song->blocks != NULL);
-  assert(song->blocks[0].address == 0x4000);
-  assert(song->blocks[0].length == 4);
-  assert(song->blocks[0].offset == 8);
-  assert(song->blocks[1].address == 0);
+  EXPECT(song != NULL);
+  EXPECT(strcmp(song->name, "Unit Tune") == 0);
+  EXPECT(song->song_data.a_chan == 1);
+  EXPECT(song->song_data.b_chan == 2);
+  EXPECT(song->song_data.c_chan == 3);
+  EXPECT(song->song_data.noise_chan == 4);
+  EXPECT(song->song_data.song_length == 100);
+  EXPECT(song->song_data.fade_length == 20);
+  EXPECT(song->song_data.hi_reg == 0x12);
+  EXPECT(song->song_data.lo_reg == 0x34);
+  EXPECT(song->pointers.stack == 0x8000);
+  EXPECT(song->pointers.init == 0x1234);
+  EXPECT(song->pointers.interrupt == 0x5678);
+  EXPECT(song->blocks != NULL);
+  EXPECT(song->blocks[0].address == 0x4000);
+  EXPECT(song->blocks[0].length == 4);
+  EXPECT(song->blocks[0].offset == 8);
+  EXPECT(song->blocks[1].address == 0);
 
   free(song_name);
   slopay_loader_song_destroy(song);
   slopay_loader_file_destroy(file);
-  assert(unlink(path) == 0);
+  EXPECT(unlink(path) == 0);
 }
 
 int main(void)
