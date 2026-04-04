@@ -1,7 +1,10 @@
 /* midiay.c
  *
- * Test shell for the AY emulator that runs on macOS and accepts MIDI input.
+ * Interactive AY shell with macOS MIDI and audio I/O.
  *
+ * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
+ *
+ * SPDX-License-Identifier: MIT
  */
 
 #include <stdio.h>

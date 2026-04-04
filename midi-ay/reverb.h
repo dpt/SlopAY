@@ -1,4 +1,11 @@
-/* reverb.h */
+/* reverb.h
+ *
+ * Simple delay-based reverb declarations.
+ *
+ * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
+ *
+ * SPDX-License-Identifier: MIT
+ */
 
 #ifndef REVERB_H
 #define REVERB_H

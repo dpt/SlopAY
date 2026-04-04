@@ -1,13 +1,10 @@
 /* slopay-target-wave.c
  *
- * WAV file output driver for AY player
+ * WAV file output driver for SlopAY.
  *
- * Writes a standard RIFF/WAV file: 44.1 kHz (or whatever sample_rate is),
- * 2-channel, 16-bit signed little-endian PCM.
+ * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
  *
- * NOTE: Writing int16_t samples with fwrite() assumes a little-endian host.
- * All modern Apple hardware (x86-64 and ARM64) is little-endian, matching
- * the WAV format requirement.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "slopay-target-wave.h"
@@ -229,4 +226,3 @@ void slopay_target_wave_cleanup(slopay_target_wave_t *driver)
   fclose(driver->file);
   driver->file = NULL;
 }
-

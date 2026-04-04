@@ -1,6 +1,10 @@
 /* slopay-target-midi.h
  *
- * Minimal Standard MIDI File (SMF) writer for piano-roll style exports.
+ * Minimal Standard MIDI File declarations for piano-roll style exports.
+ *
+ * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
+ *
+ * SPDX-License-Identifier: MIT
  */
 
 #ifndef SLOPAY_TARGET_MIDI_H
@@ -29,4 +33,3 @@ int slopay_target_midi_note_off(slopay_target_midi_t *driver,
 int slopay_target_midi_cleanup(slopay_target_midi_t *driver, uint32_t final_delta_ticks);
 
 #endif /* SLOPAY_TARGET_MIDI_H */
-

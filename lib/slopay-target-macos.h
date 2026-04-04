@@ -1,6 +1,10 @@
 /* slopay-target-macos.h
  *
- * macOS audio driver implementation using Core Audio
+ * macOS audio driver implementation using Core Audio.
+ *
+ * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
+ *
+ * SPDX-License-Identifier: MIT
  */
 
 #ifndef SLOPAY_TARGET_MACOS_H
@@ -27,4 +31,3 @@ OSStatus slopay_target_macos_stop(const slopay_target_macos_t *driver);
 void slopay_target_macos_cleanup(slopay_target_macos_t *driver);
 
 #endif /* SLOPAY_TARGET_MACOS_H */
-

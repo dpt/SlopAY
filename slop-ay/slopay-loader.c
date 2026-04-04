@@ -1,6 +1,10 @@
 /* slopay-loader.c
  *
- * AY format music file loader (Motorola/big-endian format)
+ * AY format music file loader (Motorola/big-endian format).
+ *
+ * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
+ *
+ * SPDX-License-Identifier: MIT
  */
 
 #include <stdlib.h>

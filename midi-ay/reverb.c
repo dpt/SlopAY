@@ -1,4 +1,11 @@
-/* reverb.c */
+/* reverb.c
+ *
+ * Simple delay-based reverb helper.
+ *
+ * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
+ *
+ * SPDX-License-Identifier: MIT
+ */
 
 #include <stdlib.h>
 
@@ -69,4 +76,3 @@ void reverb_set_delay(reverb_t *rev, size_t delay_length)
     rev->size = delay_length;
     rev->pos = 0;
 }
-

@@ -1,4 +1,11 @@
-/* polyblep.h */
+/* polyblep.h
+ *
+ * PolyBLEP oscillator helper declarations.
+ *
+ * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
+ *
+ * SPDX-License-Identifier: MIT
+ */
 
 #ifndef POLYBLEP_H
 #define POLYBLEP_H

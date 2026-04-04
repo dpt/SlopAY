@@ -1,6 +1,10 @@
 /* slopay-loader.h
  *
- * AY format music file loader (Motorola/big-endian format)
+ * AY format music file loader (Motorola/big-endian format).
+ *
+ * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
+ *
+ * SPDX-License-Identifier: MIT
  */
 
 #ifndef SLOPAY_LOADER_H
@@ -84,4 +88,3 @@ uint8_t slopay_loader_get_num_songs(slopay_loader_file_t *file);
 char *slopay_loader_get_song_name(slopay_loader_file_t *file, uint8_t index);
 
 #endif /* SLOPAY_LOADER_H */
-

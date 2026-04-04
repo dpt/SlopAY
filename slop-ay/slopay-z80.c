@@ -1,8 +1,10 @@
 /* slopay-z80.c
  *
- * Complete Z80 CPU emulator with all 256 opcodes implemented, including DD/FD/ED prefixes. The opcode handlers are
- * designed to be compact and efficient, with a focus on correctness and cycle accuracy for AY player compatibility.
- * Missing opcode statistics are tracked for debugging and optimization purposes.
+ * Z80 CPU emulator with opcode coverage diagnostics.
+ *
+ * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
+ *
+ * SPDX-License-Identifier: MIT
  */
 
 #include <stdlib.h>
@@ -1432,6 +1434,8 @@ int slopay_z80_execute(slopay_z80_t *cpu, int max_cycles)
 
   return cycles_executed;
 }
+
+
 
 
 

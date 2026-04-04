@@ -1,6 +1,10 @@
 /* slopay-target-midi.c
  *
- * Minimal Standard MIDI File (format 0) writer.
+ * Minimal Standard MIDI File writer for piano-roll style exports.
+ *
+ * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
+ *
+ * SPDX-License-Identifier: MIT
  */
 
 #include "slopay-target-midi.h"

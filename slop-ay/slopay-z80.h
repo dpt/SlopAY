@@ -1,6 +1,10 @@
 /* slopay-z80.h
  *
- * Z80 CPU emulator
+ * Z80 CPU emulator declarations.
+ *
+ * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
+ *
+ * SPDX-License-Identifier: MIT
  */
 
 #ifndef SLOPAY_Z80_H

@@ -1,8 +1,10 @@
 /* slopay-chip.h
-*
- * AY-3-8912 sound chip emulator
+ *
+ * AY-3-8912 sound chip emulator.
  *
  * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
+ *
+ * SPDX-License-Identifier: MIT
  */
 
 #ifndef SLOPAY_CHIP_H
@@ -69,4 +71,3 @@ void slopay_chip_set_stereo_mode(slopay_chip_t *ay, slopay_chip_stereo_mode_t mo
 #endif
 
 #endif /* SLOPAY_CHIP_H */
-

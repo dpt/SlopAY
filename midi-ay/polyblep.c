@@ -1,4 +1,11 @@
-/* polyblep.c */
+/* polyblep.c
+ *
+ * PolyBLEP oscillator helpers.
+ *
+ * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
+ *
+ * SPDX-License-Identifier: MIT
+ */
 
 #include "polyblep.h"
 
@@ -84,4 +91,3 @@ pbflt_t polyblep_sample(polyblep_osc_t *osc)
 
   return sample;
 }
-

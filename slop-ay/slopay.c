@@ -1,6 +1,10 @@
 /* slopay.c
  *
- * AY file viewer and player
+ * AY file viewer and player.
+ *
+ * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
+ *
+ * SPDX-License-Identifier: MIT
  */
 
 #include <stdio.h>

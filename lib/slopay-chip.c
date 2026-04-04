@@ -1,8 +1,10 @@
 /* slopay-chip.c
-*
- * AY-3-8912 sound chip emulator
+ *
+ * AY-3-8912 sound chip emulator.
  *
  * Copyright (c) David Thomas, 2026. <dave@davespace.co.uk>
+ *
+ * SPDX-License-Identifier: MIT
  */
 
 /* Credit: Strongly inspired by https://github.com/ponceto/aym-js */
