@@ -27,7 +27,7 @@ The project builds two executables:
 ### SlopAY syntax
 
 ```text
-SlopAY [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-P <machine>] [-I <50|300>] [-r <Hz>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>
+SlopAY [-V] [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-P <machine>] [-I <50|300>] [-r <Hz>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>
 ```
 
 - `-v, --volume <percent>`: AY volume (0-100, default 100)
@@ -38,22 +38,69 @@ SlopAY [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-P <machine>] [-I 
 - `-I, --cpc-rate <50|300>`: CPC interrupt-rate override (used only with `-P cpc`, default `50`)
 - `-r, --sample-rate <Hz>`: audio sample rate (8000-192000, default 44100)
 - `-p, --piano-roll`: print per-frame AY/Beeper notes
-- `-s, --song <song>`: 0-based song index from the AY file
+- `-s, --song <song>`: 0-based song index from the AY file; if omitted, SlopAY plays songs sequentially starting from the file's first-song index
 - `-t, --time <seconds>`: max playback time (`0` uses song length)
-- `-w, --wav <file.wav>`: write WAV instead of speaker output (requires finite duration from song length or `-t`)
-- `-M, --midi <file.mid>`: export AY + beeper notes to MIDI (requires finite duration from song length or `-t`)
+- `-w, --wav <file.wav>`: write WAV instead of speaker output (requires finite duration from song length or `-t`); in sequential mode this writes per-song files as `<name>-sN.ext`
+- `-M, --midi <file.mid>`: export AY + beeper notes to MIDI (requires finite duration from song length or `-t`); in sequential mode this writes per-song files as `<name>-sN.ext`
 - `-B, --midi-beeper-channel <0-15>`: MIDI channel used for beeper notes in `--midi` export (default `3`)
+- `-V, --version`: show program version
 - `-h, --help`: show command help
 
 Examples:
 
+Intended use: Play the full AY file in default sequential mode (first song, then the next).
 ```text
 SlopAY ProjectAY/Spectrum/Demos/example.ay
+```
+
+Intended use: Export every song in sequence to WAV files without overwriting previous songs.
+```text
+SlopAY -t 60 -w out.wav ProjectAY/Spectrum/Games/example.ay
+```
+Expected output files:
+```text
+out-s0.wav
+out-s1.wav
+...
+```
+
+Intended use: Export one selected song to a single WAV file.
+```text
 SlopAY -s 1 -t 60 -w out.wav ProjectAY/Spectrum/Games/example.ay
+```
+
+Intended use: Export every song in sequence to per-song MIDI files.
+```text
+SlopAY -t 90 -M out.mid ProjectAY/Spectrum/Demos/example.ay
+```
+Expected output files:
+```text
+out-s0.mid
+out-s1.mid
+...
+```
+
+Intended use: Export one selected song to MIDI with a custom beeper channel.
+```text
+SlopAY -s 0 -t 90 -M out.mid -B 10 ProjectAY/Spectrum/Demos/example.ay
+```
+
+Intended use: Inspect note activity frame-by-frame with the piano roll.
+```text
+SlopAY -p -s 0 -t 5 ProjectAY/Spectrum/Demos/example.ay
+```
+Example piano roll output:
+```text
+[PR 000123] A=C5     B=E4     C=---    BEEP=---
+[PR 000124] A=C5     B=E4     C=G3     BEEP=A4
+[PR 000125] A=NOISE  B=---    C=---    BEEP=---
+```
+
+Intended use: Compare stereo layouts and platform timing profiles.
+```text
 SlopAY -x acb -t 30 -w out-acb.wav ProjectAY/Spectrum/Games/example.ay
 SlopAY -P cpc -t 30 -w out-cpc.wav ProjectAY/CPC/Games/example.ay
 SlopAY -P cpc -I 50 -t 30 -w out-cpc-50hz.wav ProjectAY/CPC/Games/example.ay
-SlopAY -s 0 -t 90 -M out.mid -B 10 ProjectAY/Spectrum/Demos/example.ay
 SlopAY -r 48000 -t 60 -w out-48khz.wav ProjectAY/Spectrum/Games/example.ay
 ```
 

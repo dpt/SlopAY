@@ -1,8 +1,13 @@
 cmake_minimum_required(VERSION 4.2)
-project(SlopAY C)
+project(SlopAY VERSION 0.1.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+
+set(SLOPAY_STRICT_WARNING_FLAGS)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  set(SLOPAY_STRICT_WARNING_FLAGS -Wall -Wextra -pedantic)
+endif()
 
 add_executable(SlopAY
   slop-ay/slopay.c
@@ -16,6 +21,12 @@ add_executable(SlopAY
 target_include_directories(SlopAY PRIVATE
   "${CMAKE_SOURCE_DIR}/lib"
 )
+
+target_compile_definitions(SlopAY PRIVATE
+  SLOPAY_VERSION_STRING="${PROJECT_VERSION}"
+)
+
+target_compile_options(SlopAY PRIVATE ${SLOPAY_STRICT_WARNING_FLAGS})
 
 if(APPLE)
   find_library(COREAUDIO_FRAMEWORK CoreAudio REQUIRED)
@@ -44,6 +55,12 @@ if(APPLE)
   target_include_directories(MIDIAY PRIVATE
     "${CMAKE_SOURCE_DIR}/lib"
   )
+
+  target_compile_definitions(MIDIAY PRIVATE
+    SLOPAY_VERSION_STRING="${PROJECT_VERSION}"
+  )
+
+  target_compile_options(MIDIAY PRIVATE ${SLOPAY_STRICT_WARNING_FLAGS})
 
   target_link_libraries(MIDIAY PRIVATE
     ${COREAUDIO_FRAMEWORK}

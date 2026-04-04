@@ -32,6 +32,10 @@
 #define SLOPAY_MIDI_TICKS_PER_FRAME 1u /* MIDI ticks per AY frame (assuming 50 Hz frame rate) */
 #define SLOPAY_MIDI_VELOCITY 96 /* Default MIDI velocity for note on events (0-127) */
 
+#ifndef SLOPAY_VERSION_STRING
+#define SLOPAY_VERSION_STRING "dev"
+#endif
+
 typedef enum {
   SLOPAY_BEEPER_MIX_ADD = 0,
   SLOPAY_BEEPER_MIX_DUCK
@@ -983,7 +987,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
 
 static void print_usage(const char *prog)
 {
-  printf("Usage: %s [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-P <machine>] [-I <50|300>] [-r <Hz>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>\n", prog);
+  printf("Usage: %s [-V] [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-P <machine>] [-I <50|300>] [-r <Hz>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>\n", prog);
   printf("\n");
   printf("Loads and displays information about an AY music file.\n");
   printf("\n");
@@ -998,14 +1002,18 @@ static void print_usage(const char *prog)
   printf("  -I, --cpc-rate <50|300>         CPC interrupt rate override (default 50 in cpc mode)\n");
   printf("  -r, --sample-rate <Hz>          Audio sample rate in Hz (8000-192000, default 44100)\n");
   printf("  -p, --piano-roll                Print per-frame AY/Beeper notes during playback\n");
-  printf("  -s, --song <song>               Song number to play (0-based, default first song from file)\n");
+  printf("  -s, --song <song>               Song number to play (0-based)\n");
+  printf("                                  (default: play songs sequentially from first song)\n");
   printf("  -t, --time <seconds>            Maximum playback time in seconds\n");
   printf("                                  (0 = use song length; default: song length or Ctrl+C)\n");
   printf("  -w, --wav <file.wav>            Write output to WAV instead of playing through speakers\n");
   printf("                                  (requires a finite duration: song length or -t/--time)\n");
+  printf("                                  (sequential mode writes per-song files: <name>-sN.ext)\n");
   printf("  -M, --midi <file.mid>           Export AY + beeper notes to MIDI (format 0)\n");
   printf("                                  (requires a finite duration: song length or -t/--time)\n");
+  printf("                                  (sequential mode writes per-song files: <name>-sN.ext)\n");
   printf("  -B, --midi-beeper-channel <0-15> MIDI channel for beeper notes (default 3)\n");
+  printf("  -V, --version                   Show program version\n");
   printf("  -h, --help                      Show this help\n");
   printf("\n");
   printf("Arguments:\n");
@@ -1140,6 +1148,38 @@ static void print_song_info(slopay_loader_file_t *file,
   slopay_loader_song_destroy(song);
 }
 
+static char *slopay_make_song_export_filename(const char *base, uint8_t song_index)
+{
+  const char *slash;
+  const char *dot;
+  size_t stem_len;
+  const char *ext;
+  int needed;
+  char *out;
+
+  if (base == NULL)
+    return NULL;
+
+  slash = strrchr(base, '/');
+  dot = strrchr(base, '.');
+  if (dot != NULL && slash != NULL && dot < slash)
+    dot = NULL;
+
+  stem_len = dot ? (size_t)(dot - base) : strlen(base);
+  ext = dot ? dot : "";
+
+  needed = snprintf(NULL, 0, "%.*s-s%u%s", (int)stem_len, base, (unsigned)song_index, ext);
+  if (needed < 0)
+    return NULL;
+
+  out = malloc((size_t)needed + 1u);
+  if (out == NULL)
+    return NULL;
+
+  snprintf(out, (size_t)needed + 1u, "%.*s-s%u%s", (int)stem_len, base, (unsigned)song_index, ext);
+  return out;
+}
+
 int main(int argc, char *argv[])
 {
   slopay_loader_file_t *file;
@@ -1164,6 +1204,7 @@ int main(int argc, char *argv[])
 
   static const struct option long_opts[] = {
     { "help",          no_argument,       NULL, 'h' },
+    { "version",       no_argument,       NULL, 'V' },
     { "volume",        required_argument, NULL, 'v' },
     { "beeper-volume", required_argument, NULL, 'b' },
     { "beeper",        required_argument, NULL, 'b' },
@@ -1182,10 +1223,13 @@ int main(int argc, char *argv[])
     { NULL,             0,                 NULL,  0  }
   };
 
-  while ((opt = getopt_long(argc, argv, "hv:b:m:x:P:I:r:ps:t:w:M:B:", long_opts, NULL)) != -1) {
+  while ((opt = getopt_long(argc, argv, "hVv:b:m:x:P:I:r:ps:t:w:M:B:", long_opts, NULL)) != -1) {
     switch (opt) {
     case 'h':
       print_usage(argv[0]);
+      return EXIT_SUCCESS;
+    case 'V':
+      printf("SlopAY %s\n", SLOPAY_VERSION_STRING);
       return EXIT_SUCCESS;
     case 'v':
       parsed = strtol(optarg, &endptr, 10);
@@ -1325,39 +1369,59 @@ int main(int argc, char *argv[])
       free(song_name);
   }
 
-   /* Display details for requested song */
-   if (have_song_index) {
-     print_song_info(file,
-                     song_index,
-                     volume_percent,
-                     beeper_volume_percent,
-                     beeper_mix_mode,
-                     stereo_mode,
-                     machine,
-                     cpc_rate_override,
-                     piano_roll_enabled,
-                     midi_beeper_channel,
-                     max_seconds,
-                     sample_rate,
-                     wav_filename,
-                     midi_filename);
-   } else if (file->num_songs > 0) {
-     /* Display first song by default */
-     print_song_info(file,
-                     file->header.first_song,
-                     volume_percent,
-                     beeper_volume_percent,
-                     beeper_mix_mode,
-                     stereo_mode,
-                     machine,
-                     cpc_rate_override,
-                     piano_roll_enabled,
-                     midi_beeper_channel,
-                     max_seconds,
-                     sample_rate,
-                     wav_filename,
-                     midi_filename);
-   }
+  /* Display details for requested song, or auto-play all songs in order. */
+  if (have_song_index) {
+    print_song_info(file,
+                    song_index,
+                    volume_percent,
+                    beeper_volume_percent,
+                    beeper_mix_mode,
+                    stereo_mode,
+                    machine,
+                    cpc_rate_override,
+                    piano_roll_enabled,
+                    midi_beeper_channel,
+                    max_seconds,
+                    sample_rate,
+                    wav_filename,
+                    midi_filename);
+  } else if (file->num_songs > 0) {
+    int start = file->header.first_song;
+    int count = file->num_songs;
+
+    if (start < 0 || start >= count)
+      start = 0;
+
+    for (int n = 0; n < count; n++) {
+      const uint8_t idx = (uint8_t)((start + n) % count);
+      char *wav_song_filename = NULL;
+      char *midi_song_filename = NULL;
+
+      if (wav_filename != NULL)
+        wav_song_filename = slopay_make_song_export_filename(wav_filename, idx);
+      if (midi_filename != NULL)
+        midi_song_filename = slopay_make_song_export_filename(midi_filename, idx);
+
+      print_song_info(file,
+                      idx,
+                      volume_percent,
+                      beeper_volume_percent,
+                      beeper_mix_mode,
+                      stereo_mode,
+                      machine,
+                      cpc_rate_override,
+                      piano_roll_enabled,
+                      midi_beeper_channel,
+                      max_seconds,
+                      sample_rate,
+                      wav_song_filename ? wav_song_filename : wav_filename,
+                      midi_song_filename ? midi_song_filename : midi_filename);
+      free(wav_song_filename);
+      free(midi_song_filename);
+      if (slopay_stop_requested)
+        break;
+    }
+  }
 
   /* Cleanup */
   slopay_loader_file_destroy(file);
