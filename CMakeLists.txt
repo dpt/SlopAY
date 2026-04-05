@@ -16,7 +16,7 @@ add_executable(SlopAY
   slop-ay/slopay-loader.c
   slop-ay/slopay-target-midi.c
   slop-ay/slopay-target-wave.c
-  slop-ay/slopay-z80.c
+  slop-ay/slopz80.c
   slop-ay/slopay.c
 )
 

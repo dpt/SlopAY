@@ -28,7 +28,7 @@
   - `-w out.wav` uses deterministic offline render path
   - `-t <sec>` bounds runtime (required for unknown-length songs in WAV mode)
 - Regression checks are usually manual against files under `ProjectAY/*/Demos` and `ProjectAY/*/Games`.
-- Z80 opcode coverage gaps are surfaced at runtime via `slopay_z80_missing_opcode_snapshot` and printed summaries in `slopay_dump_missing_opcodes`.
+- Z80 opcode coverage gaps are surfaced at runtime via `slopz80_missing_opcode_snapshot` and printed summaries in `slopay_dump_missing_opcodes`.
 
 ## Code Patterns and Conventions
 - Keep parsing helpers explicit and local (`read_be16`, `read_be16_signed`, `rel_ptr` in `slop-ay/slopay-loader.c`); avoid hidden endian/pointer magic.

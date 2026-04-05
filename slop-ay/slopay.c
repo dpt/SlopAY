@@ -18,7 +18,7 @@
 #include <math.h>
 
 #include "slopay-loader.h"
-#include "slopay-z80.h"
+#include "slopz80.h"
 #include "slopay-chip.h"
 #include "slopay-target-macos.h"
 #include "slopay-target-wave.h"
@@ -64,7 +64,7 @@ typedef struct {
 } slopay_machine_profile_t;
 
 typedef struct {
-  slopay_z80_t             *cpu;
+  slopz80_t              *cpu;
   slopay_chip_t            *ay;
   slopay_target_macos_t     audio_driver;
   uint8_t                   selected_reg;
@@ -222,7 +222,7 @@ static void slopay_sigint_handler(int signum)
   slopay_stop_requested = 1;
 }
 
-static void slopay_inject_interrupt(slopay_z80_t *cpu);
+static void slopay_inject_interrupt(slopz80_t *cpu);
 
 static void slopay_sleep_frame(void)
 {
@@ -596,7 +596,7 @@ static void render_audio(void *userdata, float *output, uint32_t frames)
       cycles_to_run = io->z80_cycle_error_fxp >> Z80_CYCLE_FXP;
       io->z80_cycle_error_fxp -= (cycles_to_run << Z80_CYCLE_FXP);
       if (cycles_to_run > 0)
-        slopay_z80_execute(io->cpu, cycles_to_run);
+        slopz80_execute(io->cpu, cycles_to_run);
 
       if (--io->samples_to_next_frame <= 0) {
         slopay_emit_piano_roll_frame(io);
@@ -652,7 +652,7 @@ static void slopay_dump_registers(slopay_chip_t *ay)
   }
 }
 
-static void slopay_dump_missing_opcodes(const slopay_z80_missing_opcode_stats_t *stats)
+static void slopay_dump_missing_opcodes(const slopz80_missing_opcode_stats_t *stats)
 {
   static const char *names[3] = { "DD", "FD", "ED" };
   const uint32_t *tables[3] = { stats->dd_counts, stats->fd_counts, stats->ed_counts };
@@ -677,7 +677,7 @@ static void slopay_dump_missing_opcodes(const slopay_z80_missing_opcode_stats_t 
 }
 
 /* Inject a maskable interrupt so HALT-based players continue to run. */
-static void slopay_inject_interrupt(slopay_z80_t *cpu)
+static void slopay_inject_interrupt(slopz80_t *cpu)
 {
   uint16_t vector_addr;
   uint16_t handler_addr;
@@ -791,7 +791,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
 {
   const slopay_machine_profile_t *profile;
   int effective_interrupt_rate;
-  slopay_z80_t *cpu;
+  slopz80_t *cpu;
   slopay_io_t io;
   int frame_count;
   int frame;
@@ -805,16 +805,16 @@ static void slopay_run_z80(slopay_loader_file_t *file,
   slopay_build_player_v3_memory(song);
   slopay_load_song_blocks(file, song);
 
-  cpu = slopay_z80_create(song->z80_memory);
+  cpu = slopz80_create(song->z80_memory);
   if (cpu == NULL)
     return;
 
   memset(&io, 0, sizeof(io));
-  slopay_z80_missing_opcode_reset();
+  slopz80_missing_opcode_reset();
   io.cpu = cpu;
   io.ay = slopay_chip_create(profile->ay_clock_freq, sample_rate);
   if (io.ay == NULL) {
-    slopay_z80_destroy(cpu);
+    slopz80_destroy(cpu);
     return;
   }
   slopay_chip_set_volume(io.ay, volume_percent);
@@ -825,7 +825,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
                                     ? SLOPAY_CHIP_STEREO_MODE_ACB
                                     : SLOPAY_CHIP_STEREO_MODE_ABC));
 
-  slopay_z80_set_port_callbacks(cpu, slopay_port_read_stub, slopay_port_write_stub, &io);
+  slopz80_set_port_callbacks(cpu, slopay_port_read_stub, slopay_port_write_stub, &io);
 
   cpu->regs.af = ((uint16_t)song->song_data.hi_reg << 8) | song->song_data.lo_reg;
   cpu->regs.bc = cpu->regs.de = cpu->regs.hl = cpu->regs.af;
@@ -856,7 +856,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     fprintf(stderr, "Error: WAV output requires a finite duration.\n"
                     "       The song has no length field; use -t <seconds> to set one.\n");
     slopay_chip_destroy(io.ay);
-    slopay_z80_destroy(cpu);
+    slopz80_destroy(cpu);
     return;
   }
 
@@ -865,7 +865,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     fprintf(stderr, "Error: MIDI output requires a finite duration.\n"
                     "       The song has no length field; use -t <seconds> to set one.\n");
     slopay_chip_destroy(io.ay);
-    slopay_z80_destroy(cpu);
+    slopz80_destroy(cpu);
     return;
   }
 
@@ -895,7 +895,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     if (slopay_target_midi_init(&io.midi_driver, midi_filename) != 0) {
       fprintf(stderr, "Error: Failed to open MIDI file '%s'\n", midi_filename);
       slopay_chip_destroy(io.ay);
-      slopay_z80_destroy(cpu);
+      slopz80_destroy(cpu);
       return;
     }
      io.midi_export_enabled = 1;
@@ -914,7 +914,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
                               render_audio, &io) != 0) {
        fprintf(stderr, "Error: Failed to open WAV file '%s'\n", wav_filename);
       slopay_chip_destroy(io.ay);
-      slopay_z80_destroy(cpu);
+      slopz80_destroy(cpu);
       return;
     }
 
@@ -934,7 +934,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
        fprintf(stderr, "Error: Failed to initialize macOS audio driver\n");
       slopay_finalize_midi_export(&io);
       slopay_chip_destroy(io.ay);
-      slopay_z80_destroy(cpu);
+      slopz80_destroy(cpu);
       return;
     }
 
@@ -943,7 +943,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
       slopay_target_macos_cleanup(&io.audio_driver);
       slopay_finalize_midi_export(&io);
       slopay_chip_destroy(io.ay);
-      slopay_z80_destroy(cpu);
+      slopz80_destroy(cpu);
       return;
     }
     audio_started = 1;
@@ -976,8 +976,8 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     printf("Preview sample hash: 0x%08X\n", slopay_preview_samples(io.ay, 2048));
   }
 
-  slopay_z80_missing_opcode_stats_t missing_stats;
-  slopay_z80_missing_opcode_snapshot(&missing_stats);
+  slopz80_missing_opcode_stats_t missing_stats;
+  slopz80_missing_opcode_snapshot(&missing_stats);
   slopay_dump_missing_opcodes(&missing_stats);
 
   if (wav_filename == NULL) {
@@ -986,7 +986,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     slopay_target_macos_cleanup(&io.audio_driver);
   }
   slopay_chip_destroy(io.ay);
-  slopay_z80_destroy(cpu);
+  slopz80_destroy(cpu);
 }
 
 static void print_usage(const char *prog)

@@ -1,4 +1,4 @@
-/* slopay-z80.c
+/* slopz80.c
  *
  * Z80 CPU emulator with opcode coverage diagnostics.
  *
@@ -11,23 +11,23 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "slopay-z80.h"
+#include "slopz80.h"
 
-/* Internal compatibility names keep opcode core unchanged while public API is slopay_*. */
-typedef slopay_z80_t z80_t;
-typedef slopay_z80_port_read_fn z80_port_read_fn;
-typedef slopay_z80_port_write_fn z80_port_write_fn;
-typedef slopay_z80_missing_opcode_stats_t z80_missing_opcode_stats_t;
+/* Internal compatibility names keep opcode core unchanged while public API is slopz80_*. */
+typedef slopz80_t z80_t;
+typedef slopz80_port_read_fn z80_port_read_fn;
+typedef slopz80_port_write_fn z80_port_write_fn;
+typedef slopz80_missing_opcode_stats_t z80_missing_opcode_stats_t;
 
 static int z80_parity(uint8_t v);
 static z80_missing_opcode_stats_t z80_missing_stats;
 
-void slopay_z80_missing_opcode_reset(void)
+void slopz80_missing_opcode_reset(void)
 {
   memset(&z80_missing_stats, 0, sizeof(z80_missing_stats));
 }
 
-void slopay_z80_missing_opcode_snapshot(z80_missing_opcode_stats_t *out_stats)
+void slopz80_missing_opcode_snapshot(z80_missing_opcode_stats_t *out_stats)
 {
   if (out_stats == NULL)
     return;
@@ -35,7 +35,7 @@ void slopay_z80_missing_opcode_snapshot(z80_missing_opcode_stats_t *out_stats)
   *out_stats = z80_missing_stats;
 }
 
-slopay_z80_t *slopay_z80_create(uint8_t *memory)
+slopz80_t *slopz80_create(uint8_t *memory)
 {
   z80_t *cpu = malloc(sizeof(*cpu));
   if (cpu == NULL)
@@ -45,16 +45,16 @@ slopay_z80_t *slopay_z80_create(uint8_t *memory)
   cpu->port_read = NULL;
   cpu->port_write = NULL;
   cpu->port_ctx = NULL;
-  slopay_z80_reset(cpu);
+  slopz80_reset(cpu);
   return cpu;
 }
 
-void slopay_z80_destroy(slopay_z80_t *cpu)
+void slopz80_destroy(slopz80_t *cpu)
 {
   if (cpu) free(cpu);
 }
 
-void slopay_z80_reset(slopay_z80_t *cpu)
+void slopz80_reset(slopz80_t *cpu)
 {
   memset(&cpu->regs, 0, sizeof(cpu->regs));
   cpu->regs.pc = 0x0000;
@@ -63,10 +63,10 @@ void slopay_z80_reset(slopay_z80_t *cpu)
   cpu->cycles = 0;
 }
 
-void slopay_z80_set_port_callbacks(slopay_z80_t *cpu,
-                                   slopay_z80_port_read_fn read_fn,
-                                   slopay_z80_port_write_fn write_fn,
-                                   void *ctx)
+void slopz80_set_port_callbacks(slopz80_t *cpu,
+                                slopz80_port_read_fn read_fn,
+                                slopz80_port_write_fn write_fn,
+                                void *ctx)
 {
   cpu->port_read = read_fn;
   cpu->port_write = write_fn;
@@ -1127,7 +1127,7 @@ static int z80_exec_ddfd(z80_t *cpu, int use_iy)
 }
 
 /* Opcode dispatcher implementation */
-int slopay_z80_execute(slopay_z80_t *cpu, int max_cycles)
+int slopz80_execute(slopz80_t *cpu, int max_cycles)
 {
   int cycles_executed = 0;
   uint8_t opcode;
@@ -1436,10 +1436,5 @@ int slopay_z80_execute(slopay_z80_t *cpu, int max_cycles)
 
   return cycles_executed;
 }
-
-
-
-
-
 
 

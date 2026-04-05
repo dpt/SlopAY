@@ -1,4 +1,4 @@
-/* slopay-z80.h
+/* slopz80.h
  *
  * Z80 CPU emulator declarations.
  *
@@ -7,8 +7,8 @@
  * SPDX-License-Identifier: MIT
  */
 
-#ifndef SLOPAY_Z80_H
-#define SLOPAY_Z80_H
+#ifndef SLOPZ80_H
+#define SLOPZ80_H
 
 #include <stdint.h>
 
@@ -20,25 +20,25 @@ typedef struct {
   uint8_t i, r;
   uint8_t iff1, iff2, im;
   uint8_t halted;
-} slopay_z80_regs_t;
+} slopz80_regs_t;
 
-typedef uint8_t (*slopay_z80_port_read_fn)(void *ctx, uint16_t port);
-typedef void (*slopay_z80_port_write_fn)(void *ctx, uint16_t port, uint8_t val);
+typedef uint8_t (*slopz80_port_read_fn)(void *ctx, uint16_t port);
+typedef void (*slopz80_port_write_fn)(void *ctx, uint16_t port, uint8_t val);
 
 typedef struct {
-  slopay_z80_regs_t regs;
+  slopz80_regs_t regs;
   uint8_t *mem;
   uint32_t cycles;
-  slopay_z80_port_read_fn port_read;
-  slopay_z80_port_write_fn port_write;
+  slopz80_port_read_fn port_read;
+  slopz80_port_write_fn port_write;
   void *port_ctx;
-} slopay_z80_t;
+} slopz80_t;
 
 typedef struct {
   uint32_t dd_counts[256];
   uint32_t fd_counts[256];
   uint32_t ed_counts[256];
-} slopay_z80_missing_opcode_stats_t;
+} slopz80_missing_opcode_stats_t;
 
 /* Flag bits */
 #define Z80_FLAG_C  0x01  /* Carry */
@@ -72,16 +72,17 @@ typedef struct {
 #define Z80_MEM_WR(cpu, addr, val) ((cpu)->mem[(addr) & 0xFFFF] = (val))
 
 /* Public functions */
-slopay_z80_t *slopay_z80_create(uint8_t *memory);
-void slopay_z80_destroy(slopay_z80_t *cpu);
-void slopay_z80_reset(slopay_z80_t *cpu);
-int slopay_z80_execute(slopay_z80_t *cpu, int max_cycles);
-void slopay_z80_missing_opcode_reset(void);
-void slopay_z80_missing_opcode_snapshot(slopay_z80_missing_opcode_stats_t *out_stats);
-void slopay_z80_set_port_callbacks(slopay_z80_t *cpu,
-                                   slopay_z80_port_read_fn read_fn,
-                                   slopay_z80_port_write_fn write_fn,
-                                   void *ctx);
+slopz80_t *slopz80_create(uint8_t *memory);
+void slopz80_destroy(slopz80_t *cpu);
+void slopz80_reset(slopz80_t *cpu);
+int slopz80_execute(slopz80_t *cpu, int max_cycles);
+void slopz80_missing_opcode_reset(void);
+void slopz80_missing_opcode_snapshot(slopz80_missing_opcode_stats_t *out_stats);
+void slopz80_set_port_callbacks(slopz80_t *cpu,
+                                slopz80_port_read_fn read_fn,
+                                slopz80_port_write_fn write_fn,
+                                void *ctx);
 
-#endif /* SLOPAY_Z80_H */
+#endif /* SLOPZ80_H */
+
 

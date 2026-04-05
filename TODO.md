@@ -18,7 +18,7 @@
 ## Medium priority
 
 - [ ] **Address strict warning backlog (`-Wall -Wextra -pedantic`)**
-  - Fix reported `unused parameter` warnings in `slop-ay/slopay-z80.c`.
+  - Fix reported `unused parameter` warnings in `slop-ay/slopz80.c`.
   - Work through additional warnings surfaced by stricter flags and keep builds warning-clean.
 
 - [ ] **Add coverage checks for sequential export naming (`slop-ay/slopay.c`)**
@@ -54,4 +54,3 @@
 - [ ] BBC Micro/Texas Instruments SN76489 support.
 - [ ] MIDI source.
 - [ ] Is volume scaling correct? CHQ's volume seems all over the place.
-
