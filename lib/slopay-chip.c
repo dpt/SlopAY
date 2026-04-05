@@ -353,7 +353,7 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
     output = ((tone_disabled || tone_high) && (noise_disabled || noise_high)) ? +1 : -1;
 
     vol = ay->regs[AY_REG_CHANNEL_A_VOLUME + ch];
-    if (vol < 16)
+    if ((vol & AY_VOLUME_USE_ENVELOPE_BIT) == 0)
       /* Reduce 16-bit DAC table values to 15-bit */
       amplitude = ay_dac[vol] / 2;
     else

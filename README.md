@@ -127,6 +127,7 @@ WAV/MIDI export.
 - `o`: cycle envelope period
 - `v <0-100>`: set master volume percent
 - `g <0-127>`: set channel volume (MIDI scale)
+- `u <A|B|C|0|1|2> <0|1>`: disable/enable envelope control for one AY channel
 - `r`: cycle reverb delay
 - `r 0`: disable reverb
 - `e`: cycle echo delay

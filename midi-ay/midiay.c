@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <ctype.h>
 #include <math.h>
 #include <termios.h>
 #include <unistd.h>
@@ -102,6 +103,8 @@ typedef struct {
   size_t                echo_delay;
   int                   chord_enabled;
   play_mode_chord_type_t chord_type;
+  uint8_t               channel_volume_level[MAX_POLYPHONY];
+  int                   channel_envelope_enabled[MAX_POLYPHONY];
   int                   midi_chord_active[MIDI_NOTE_COUNT];
   int                   midi_chord_notes[MIDI_NOTE_COUNT][PLAY_MODE_CHORD_VOICES];
 } midiay_state_t;
@@ -111,7 +114,9 @@ static midiay_state_t g_state = {
   .reverb_delay = 0,
   .echo_delay   = 0,
   .chord_enabled = 0,
-  .chord_type    = PLAY_MODE_CHORD_TYPE_MAJOR
+  .chord_type    = PLAY_MODE_CHORD_TYPE_MAJOR,
+  .channel_volume_level = { 15, 15, 15 },
+  .channel_envelope_enabled = { 0, 0, 0 }
 };
 
 static int parse_register_write(const char *input, int *reg_out, int *val_out)
@@ -217,6 +222,48 @@ static int parse_effect_disable_command(const char *input, const char effect)
   return (*p == '\0');
 }
 
+static int parse_envelope_channel_command(const char *input, int *channel_out, int *enabled_out)
+{
+  const char *p;
+  char       *endptr;
+  long        enabled;
+  int         channel;
+
+  if (input[0] != 'U' && input[0] != 'u')
+    return 0;
+
+  p = input + 1;
+  while (*p == ' ' || *p == '\t')
+    p++;
+
+  if (*p >= '0' && *p <= '2') {
+    channel = *p - '0';
+    p++;
+  } else {
+    const int c = toupper((unsigned char)*p);
+    if (c < 'A' || c > 'C')
+      return 0;
+    channel = c - 'A';
+    p++;
+  }
+
+  while (*p == ' ' || *p == '\t')
+    p++;
+
+  enabled = strtol(p, &endptr, 10);
+  if (endptr == p || (enabled != 0 && enabled != 1))
+    return 0;
+
+  while (*endptr == ' ' || *endptr == '\t' || *endptr == '\r' || *endptr == '\n')
+    endptr++;
+  if (*endptr != '\0')
+    return 0;
+
+  *channel_out = channel;
+  *enabled_out = (int)enabled;
+  return 1;
+}
+
 static int play_mode_semitone_for_key(const int key)
 {
   switch (key) {
@@ -274,6 +321,27 @@ static int read_single_key(int *key)
 static const char *play_mode_chord_type_name(play_mode_chord_type_t chord_type);
 static void play_mode_build_chord(int root_note, play_mode_chord_type_t chord_type, int notes_out[PLAY_MODE_CHORD_VOICES]);
 static void repl_print_help_table(void);
+
+static void apply_channel_volume_register(const int ch)
+{
+  const uint8_t reg_value = (uint8_t)((g_state.channel_volume_level[ch] & 0x0Fu) |
+                                      (g_state.channel_envelope_enabled[ch] ? AY_VOLUME_USE_ENVELOPE_BIT : 0x00u));
+  slopay_chip_write_register(g_state.ay,
+                             (slopay_chip_reg_t)(AY_REG_CHANNEL_A_VOLUME + ch),
+                             reg_value);
+}
+
+static void set_channel_envelope_enabled(const int ch, const int enabled)
+{
+  if (ch < 0 || ch >= MAX_POLYPHONY)
+    return;
+
+  g_state.channel_envelope_enabled[ch] = enabled ? 1 : 0;
+  apply_channel_volume_register(ch);
+  printf("Envelope %s for channel %c\n",
+         g_state.channel_envelope_enabled[ch] ? "enabled" : "disabled",
+         (char)('A' + ch));
+}
 
 /* ----------------------------------------------------------------------- */
 
@@ -401,7 +469,8 @@ static void setchannelvol(float midi_volume)
 
   printf("Setting channel volumes to %.2f\n", midi_volume);
   for (ch = 0; ch < MAX_POLYPHONY; ch++) {
-    slopay_chip_write_register(g_state.ay, (slopay_chip_reg_t)(AY_REG_CHANNEL_A_VOLUME + ch), ay_volume);
+    g_state.channel_volume_level[ch] = ay_volume;
+    apply_channel_volume_register(ch);
     polyblep_set_pw(&g_state.oscs[ch], midi_volume);
   }
 }
@@ -840,6 +909,7 @@ static void repl_print_help_table(void)
   printf("| h           | Show this help table                |\n");
   printf("| c           | Toggle chord mode                   |\n");
   printf("| m           | Cycle chord type                    |\n");
+  printf("| u <ch> <0|1>| Envelope off/on for ch A-C or 0-2   |\n");
   printf("| v <0-100>   | Set master volume percent           |\n");
   printf("| g <0-127>   | Set channel volume from MIDI scale  |\n");
   printf("| s           | Cycle envelope shape                |\n");
@@ -861,6 +931,8 @@ static void repl(void)
   int  cmd;
   int  reg;
   int  val;
+  int  env_ch;
+  int  env_enabled;
   int  volume_value;
   int  master_volume_value;
 
@@ -886,6 +958,11 @@ static void repl(void)
 
     if (!handled && parse_channel_volume_command(input, &volume_value)) {
       setchannelvol((float)volume_value / (float)MIDI_MAX_VALUE);
+      handled = 1;
+    }
+
+    if (!handled && parse_envelope_channel_command(input, &env_ch, &env_enabled)) {
+      set_channel_envelope_enabled(env_ch, env_enabled);
       handled = 1;
     }
 

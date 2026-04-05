@@ -414,7 +414,7 @@ static void slopay_ay_channel_note(slopay_chip_t *ay,
   const uint8_t vol_reg = slopay_chip_read_register(ay, (slopay_chip_reg_t)(AY_REG_CHANNEL_A_VOLUME + ch));
   const int tone_enabled = (mixer & (AY_MIXER_NO_TONE_A << ch)) == 0;
   const int noise_enabled = (mixer & (AY_MIXER_NO_NOISE_A << ch)) == 0;
-  const int has_level = ((vol_reg & 0x10u) != 0) || ((vol_reg & 0x0Fu) > 0);
+  const int has_level = ((vol_reg & AY_VOLUME_USE_ENVELOPE_BIT) != 0) || ((vol_reg & 0x0Fu) > 0);
 
   if (!has_level || (!tone_enabled && !noise_enabled)) {
     snprintf(out, out_size, "---");
@@ -441,7 +441,7 @@ static int slopay_ay_channel_midi_note(slopay_chip_t *ay, int ay_clock_freq, int
   const uint8_t vol_reg = slopay_chip_read_register(ay, (slopay_chip_reg_t)(AY_REG_CHANNEL_A_VOLUME + ch));
   const int tone_enabled = (mixer & (AY_MIXER_NO_TONE_A << ch)) == 0;
   const int noise_enabled = (mixer & (AY_MIXER_NO_NOISE_A << ch)) == 0;
-  const int has_level = ((vol_reg & 0x10u) != 0) || ((vol_reg & 0x0Fu) > 0);
+  const int has_level = ((vol_reg & AY_VOLUME_USE_ENVELOPE_BIT) != 0) || ((vol_reg & 0x0Fu) > 0);
 
   if (!has_level || (!tone_enabled && !noise_enabled))
     return -1;

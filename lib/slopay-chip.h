@@ -22,6 +22,7 @@ extern "C" {
 #define AY_COARSE_PITCH_MAX              (0x0Fu)
 #define AY_NOISE_PITCH_MAX               (0x1Fu)
 #define AY_VOLUME_MAX                    (0x1Fu)
+#define AY_VOLUME_USE_ENVELOPE_BIT       (0x10u)
 #define AY_ENVELOPE_SHAPE_MAX            (0x0Fu)
 #define AY_ENVELOPE_SHAPE_ATTACK_BIT   (1u << 2)
 #define AY_MASTER_VOLUME_MAX               (100)
