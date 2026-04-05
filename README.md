@@ -116,10 +116,13 @@ MIDIAY
 
 - `<reg> <value>`: write AY register directly (reg `0–15`, value `0–255`)
 - `p`: enter play mode (see below)
+- `h`: print the command help table
+- `c`: toggle chord mode (shared with play mode and MIDI input)
+- `m`: cycle chord type (`maj` → `min` → `sus4` → `sus2` → `dim` → `aug` → `5`)
 - `s`: cycle envelope shape
 - `o`: cycle envelope period
-- `v <0-127>`: set channel volume (MIDI scale)
-- `m <0-100>`: set master volume percent
+- `v <0-100>`: set master volume percent
+- `g <0-127>`: set channel volume (MIDI scale)
 - `r`: cycle reverb delay
 - `r 0`: disable reverb
 - `e`: cycle echo delay
@@ -145,9 +148,13 @@ Controls:
 - `A S D F G H J`: play C D E F G A B
 - `W E T Y U`: play the adjacent sharps (C♯ D♯ F♯ G♯ A♯)
 - `Z` / `X`: octave down / up
+- `C`: toggle three-note chord mode on/off
+- `M`: cycle chord type (`maj` / `min` / `sus4` / `sus2` / `dim` / `aug` / `5`)
 - `[` / `]`: shorten / lengthen note hold time (50 ms steps, range 50–2000 ms, default 200 ms)
 - `Space`: stop all current notes immediately
 - `Q`: return to command mode
+
+Chord mode/type are global and shared across command mode, play mode, and MIDI input.
 
 Links
 -----

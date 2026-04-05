@@ -64,6 +64,20 @@
 #define PLAY_MODE_MIN_OCT            (0)
 #define PLAY_MODE_MAX_OCT            (8)
 
+#define PLAY_MODE_CHORD_VOICES       (3)
+#define MIDI_NOTE_COUNT            (128)
+
+typedef enum {
+  PLAY_MODE_CHORD_TYPE_MAJOR = 0,
+  PLAY_MODE_CHORD_TYPE_MINOR,
+  PLAY_MODE_CHORD_TYPE_SUS4,
+  PLAY_MODE_CHORD_TYPE_SUS2,
+  PLAY_MODE_CHORD_TYPE_DIM,
+  PLAY_MODE_CHORD_TYPE_AUG,
+  PLAY_MODE_CHORD_TYPE_POWER,
+  PLAY_MODE_CHORD_TYPE_COUNT
+} play_mode_chord_type_t;
+
 /* ----------------------------------------------------------------------- */
 
 #define DIV_NEAREST(a,b) (((a) + (b) / 2) / (b))
@@ -86,12 +100,18 @@ typedef struct {
   int                   stereo_mode;
   size_t                reverb_delay;
   size_t                echo_delay;
+  int                   chord_enabled;
+  play_mode_chord_type_t chord_type;
+  int                   midi_chord_active[MIDI_NOTE_COUNT];
+  int                   midi_chord_notes[MIDI_NOTE_COUNT][PLAY_MODE_CHORD_VOICES];
 } midiay_state_t;
 
 static midiay_state_t g_state = {
   .stereo_mode  = SLOPAY_CHIP_STEREO_MODE_MONO,
   .reverb_delay = 0,
-  .echo_delay   = 0
+  .echo_delay   = 0,
+  .chord_enabled = 0,
+  .chord_type    = PLAY_MODE_CHORD_TYPE_MAJOR
 };
 
 static int parse_register_write(const char *input, int *reg_out, int *val_out)
@@ -121,12 +141,12 @@ static int parse_register_write(const char *input, int *reg_out, int *val_out)
   return 1;
 }
 
-static int parse_volume_command(const char *input, int *value_out)
+static int parse_channel_volume_command(const char *input, int *value_out)
 {
   char *endptr;
   long  value;
 
-  if (input[0] != 'V' && input[0] != 'v')
+  if (input[0] != 'G' && input[0] != 'g')
     return 0;
 
   endptr = (char *)input + 1;
@@ -149,16 +169,21 @@ static int parse_volume_command(const char *input, int *value_out)
 static int parse_master_volume_command(const char *input, int *value_out)
 {
   char *endptr;
+  char *value_start;
   long  value;
 
-  if (input[0] != 'M' && input[0] != 'm')
+  if (input[0] != 'V' && input[0] != 'v')
     return 0;
 
   endptr = (char *)input + 1;
   while (*endptr == ' ' || *endptr == '\t')
     endptr++;
 
+  value_start = endptr;
+
   value = strtol(endptr, &endptr, 10);
+  if (endptr == value_start)
+    return 0;
   if (value < 0 || value > 100)
     return 0;
 
@@ -245,6 +270,10 @@ static int read_single_key(int *key)
   *key = (int)ch;
   return 0;
 }
+
+static const char *play_mode_chord_type_name(play_mode_chord_type_t chord_type);
+static void play_mode_build_chord(int root_note, play_mode_chord_type_t chord_type, int notes_out[PLAY_MODE_CHORD_VOICES]);
+static void repl_print_help_table(void);
 
 /* ----------------------------------------------------------------------- */
 
@@ -360,6 +389,9 @@ static void key_release_all(void)
 
     g_state.channel_to_note[ch] = 0;
   }
+
+  for (int note = 0; note < MIDI_NOTE_COUNT; note++)
+    g_state.midi_chord_active[note] = 0;
 }
 
 static void setchannelvol(float midi_volume)
@@ -453,8 +485,56 @@ static void disableecho(void)
   printf("Echo disabled\n");
 }
 
+static void togglechordmode(void)
+{
+  g_state.chord_enabled = !g_state.chord_enabled;
+}
+
+static void cyclechordtype(void)
+{
+  g_state.chord_type = (play_mode_chord_type_t)((g_state.chord_type + 1) % PLAY_MODE_CHORD_TYPE_COUNT);
+  printf("MIDI chord type: %s\n", play_mode_chord_type_name(g_state.chord_type));
+}
+
 /* ----------------------------------------------------------------------- */
 
+
+static void midi_note_on(int note)
+{
+  if (note < 0 || note >= MIDI_NOTE_COUNT)
+    return;
+
+  if (!g_state.chord_enabled) {
+    key_hold(note);
+    return;
+  }
+
+  if (g_state.midi_chord_active[note]) {
+    for (int i = 0; i < PLAY_MODE_CHORD_VOICES; i++)
+      key_release(g_state.midi_chord_notes[note][i]);
+  }
+
+  play_mode_build_chord(note, g_state.chord_type, g_state.midi_chord_notes[note]);
+  for (int i = 0; i < PLAY_MODE_CHORD_VOICES; i++)
+    key_hold(g_state.midi_chord_notes[note][i]);
+
+  g_state.midi_chord_active[note] = 1;
+}
+
+static void midi_note_off(int note)
+{
+  if (note < 0 || note >= MIDI_NOTE_COUNT)
+    return;
+
+  if (g_state.midi_chord_active[note]) {
+    for (int i = PLAY_MODE_CHORD_VOICES - 1; i >= 0; i--)
+      key_release(g_state.midi_chord_notes[note][i]);
+    g_state.midi_chord_active[note] = 0;
+    return;
+  }
+
+  key_release(note);
+}
 
 static void midiMessageCallback(const MIDIPacketList *pktList, void *refCon, void *connRefCon) {
   const MIDIPacket *packet = pktList->packet;
@@ -483,15 +563,15 @@ static void midiMessageCallback(const MIDIPacketList *pktList, void *refCon, voi
       case MIDI_NOTE_OFF: /* Note Off */
         printf("  Note Off: Channel %d, Note %d, Velocity %d\n",
                channel + 1, data1, data2);
-        key_release(data1);
+        midi_note_off(data1);
         break;
       case MIDI_NOTE_ON: /* Note On */
         printf("  Note On: Channel %d, Note %d, Velocity %d\n",
                channel + 1, data1, data2);
         if (data2)
-          key_hold(data1);
+          midi_note_on(data1);
         else
-          key_release(data1);
+          midi_note_off(data1);
         break;
       case MIDI_CONTROL_CHANGE: /* Control Change */
         printf("  Control Change: Channel %d, Controller %d, Value %d\n",
@@ -566,6 +646,63 @@ static void teardownMIDI(void)
   }
 }
 
+static int play_mode_fit_note(int note)
+{
+  while (note > 127)
+    note -= 12;
+  while (note < 0)
+    note += 12;
+  return note;
+}
+
+static const char *play_mode_chord_type_name(play_mode_chord_type_t chord_type)
+{
+  switch (chord_type) {
+  default:
+  case PLAY_MODE_CHORD_TYPE_MAJOR: return "maj";
+  case PLAY_MODE_CHORD_TYPE_MINOR: return "min";
+  case PLAY_MODE_CHORD_TYPE_SUS4:  return "sus4";
+  case PLAY_MODE_CHORD_TYPE_SUS2:  return "sus2";
+  case PLAY_MODE_CHORD_TYPE_DIM:   return "dim";
+  case PLAY_MODE_CHORD_TYPE_AUG:   return "aug";
+  case PLAY_MODE_CHORD_TYPE_POWER: return "5";
+  }
+}
+
+static void play_mode_print_status(int play_octave, int note_ms, int chord_enabled, play_mode_chord_type_t chord_type)
+{
+  printf("\rOctave: %d  Hold: %dms  Chord: %s", play_octave, note_ms, chord_enabled ? "on" : "off");
+  if (chord_enabled)
+    printf(" (%s)", play_mode_chord_type_name(chord_type));
+  printf("\n");
+}
+
+static void repl_print_chord_status(void)
+{
+  printf("MIDI chord mode: %s", g_state.chord_enabled ? "on" : "off");
+  if (g_state.chord_enabled)
+    printf(" (%s)", play_mode_chord_type_name(g_state.chord_type));
+  printf("\n");
+}
+
+static void play_mode_build_chord(int root_note, play_mode_chord_type_t chord_type, int notes_out[PLAY_MODE_CHORD_VOICES])
+{
+  static const int intervals[PLAY_MODE_CHORD_TYPE_COUNT][PLAY_MODE_CHORD_VOICES] = {
+    { 0, 4, 7 }, /* major */
+    { 0, 3, 7 }, /* minor */
+    { 0, 5, 7 }, /* sus4 */
+    { 0, 2, 7 }, /* sus2 */
+    { 0, 3, 6 }, /* diminished */
+    { 0, 4, 8 }, /* augmented */
+    { 0, 7, 12 } /* power (root, fifth, octave) */
+  };
+
+  for (int i = 0; i < PLAY_MODE_CHORD_VOICES; i++)
+    notes_out[i] = play_mode_fit_note(root_note + intervals[chord_type][i]);
+}
+
+/* ----------------------------------------------------------------------- */
+
 static void run_play_mode(void)
 {
   struct termios saved;
@@ -573,8 +710,8 @@ static void run_play_mode(void)
   int            note_ms       = PLAY_MODE_NOTE_MS_DEFAULT;
 
   printf("Play mode: A S D F G H J = C D E F G A B, W E T Y U = sharps\n");
-  printf("           Z/X = octave down/up, [/] = shorter/longer hold, Space = stop all, Q = return\n");
-  printf("Octave: %d  Hold: %dms\n", play_octave, note_ms);
+  printf("           Z/X = octave down/up, [/] = shorter/longer hold, C = toggle 3-note chords, M = cycle chord type, Space = stop all, Q = return\n");
+  play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type);
 
   if (terminal_enable_raw_mode(&saved) != 0) {
     printf("Failed to enter raw input mode\n");
@@ -600,15 +737,25 @@ static void run_play_mode(void)
     if (key == 'Z') {
       if (play_octave > PLAY_MODE_MIN_OCT) {
         play_octave--;
-        printf("\rOctave: %d  Hold: %dms\n", play_octave, note_ms);
+        play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type);
       }
       continue;
     }
     if (key == 'X') {
       if (play_octave < PLAY_MODE_MAX_OCT) {
         play_octave++;
-        printf("\rOctave: %d  Hold: %dms\n", play_octave, note_ms);
+        play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type);
       }
+      continue;
+    }
+    if (key == 'C') {
+      g_state.chord_enabled = !g_state.chord_enabled;
+      play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type);
+      continue;
+    }
+    if (key == 'M') {
+      g_state.chord_type = (play_mode_chord_type_t)((g_state.chord_type + 1) % PLAY_MODE_CHORD_TYPE_COUNT);
+      play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type);
       continue;
     }
     if (key == '[') {
@@ -616,7 +763,7 @@ static void run_play_mode(void)
         note_ms -= PLAY_MODE_NOTE_MS_STEP;
         if (note_ms < PLAY_MODE_NOTE_MS_MIN)
           note_ms = PLAY_MODE_NOTE_MS_MIN;
-        printf("\rOctave: %d  Hold: %dms\n", play_octave, note_ms);
+        play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type);
       }
       continue;
     }
@@ -625,7 +772,7 @@ static void run_play_mode(void)
         note_ms += PLAY_MODE_NOTE_MS_STEP;
         if (note_ms > PLAY_MODE_NOTE_MS_MAX)
           note_ms = PLAY_MODE_NOTE_MS_MAX;
-        printf("\rOctave: %d  Hold: %dms\n", play_octave, note_ms);
+        play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type);
       }
       continue;
     }
@@ -636,9 +783,22 @@ static void run_play_mode(void)
 
     note = (play_octave + 1) * 12 + semitone;
 
-    key_hold(note);
-    usleep((useconds_t)note_ms * 1000u);
-    key_release(note);
+    if (!g_state.chord_enabled) {
+      key_hold(note);
+      usleep((useconds_t)note_ms * 1000u);
+      key_release(note);
+    } else {
+      int chord_notes[PLAY_MODE_CHORD_VOICES];
+      play_mode_build_chord(note, g_state.chord_type, chord_notes);
+
+      for (int i = 0; i < PLAY_MODE_CHORD_VOICES; i++)
+        key_hold(chord_notes[i]);
+
+      usleep((useconds_t)note_ms * 1000u);
+
+      for (int i = PLAY_MODE_CHORD_VOICES - 1; i >= 0; i--)
+        key_release(chord_notes[i]);
+    }
   }
 
   key_release_all();
@@ -656,6 +816,9 @@ typedef struct {
 
 static const repl_key_command_t repl_key_commands[] = {
   { 'Q', NULL,             1 },
+  { 'H', repl_print_help_table, 0 },
+  { 'C', togglechordmode,  0 },
+  { 'M', cyclechordtype,   0 },
   { 'S', setenvshape,      0 },
   { 'P', run_play_mode,    0 },
   { 'O', setenvperiod,     0 },
@@ -664,6 +827,31 @@ static const repl_key_command_t repl_key_commands[] = {
   { 'T', cyclestereomode,  0 },
   { '.', key_release_all,  0 }
 };
+
+/* ----------------------------------------------------------------------- */
+
+static void repl_print_help_table(void)
+{
+  printf("+-------------+-------------------------------------+\n");
+  printf("| Command     | Action                              |\n");
+  printf("+-------------+-------------------------------------+\n");
+  printf("| <reg> <val> | Write AY register (e.g. 0 128)      |\n");
+  printf("| p           | Enter play mode                     |\n");
+  printf("| h           | Show this help table                |\n");
+  printf("| c           | Toggle chord mode                   |\n");
+  printf("| m           | Cycle chord type                    |\n");
+  printf("| v <0-100>   | Set master volume percent           |\n");
+  printf("| g <0-127>   | Set channel volume from MIDI scale  |\n");
+  printf("| s           | Cycle envelope shape                |\n");
+  printf("| o           | Cycle envelope period               |\n");
+  printf("| r / r 0     | Cycle reverb delay / disable reverb |\n");
+  printf("| e / e 0     | Cycle echo delay / disable echo     |\n");
+  printf("| t           | Cycle stereo mode (mono/abc/acb)    |\n");
+  printf("| .           | Stop all notes                      |\n");
+  printf("| q           | Quit                                |\n");
+  printf("+-------------+-------------------------------------+\n");
+  printf("Play mode and MIDI input share global chord settings.\n");
+}
 
 /* ----------------------------------------------------------------------- */
 
@@ -676,15 +864,12 @@ static void repl(void)
   int  volume_value;
   int  master_volume_value;
 
-  printf("Enter register and value (e.g., '0 128' for reg 0, value 128) to program AY\n");
-  printf("Enter 'p' for play mode (single keypress notes)\n");
-  printf("Enter 'v <0-127>' to set channel volume from MIDI scale\n");
-  printf("Enter 'm <0-100>' to set master volume percent\n");
-  printf("Enter 's' to set envelope shape, 'o' to set envelope period, 'r' to set reverb delay, 'r 0' to disable reverb, 'e' to set echo delay, 'e 0' to disable echo, 't' to cycle stereo mode (mono/abc/acb), '.' to stop all notes, or 'q' to quit\n");
+  repl_print_help_table();
 
   for (;;) {
     int handled = 0;
 
+    repl_print_chord_status();
     printf("Command> ");
     if (!fgets(input, sizeof(input), stdin))
       break;
@@ -699,7 +884,7 @@ static void repl(void)
       handled = 1;
     }
 
-    if (!handled && parse_volume_command(input, &volume_value)) {
+    if (!handled && parse_channel_volume_command(input, &volume_value)) {
       setchannelvol((float)volume_value / (float)MIDI_MAX_VALUE);
       handled = 1;
     }
@@ -733,7 +918,7 @@ static void repl(void)
       }
 
     if (!handled)
-      printf("Invalid input. Use 'q' to quit\n");
+      printf("Invalid input. Use 'h' for help or 'q' to quit\n");
   }
 }
 
