@@ -121,6 +121,9 @@ MIDIAY
 - `v <0-127>`: set channel volume (MIDI scale)
 - `m <0-100>`: set master volume percent
 - `r`: cycle reverb delay
+- `r 0`: disable reverb
+- `e`: cycle echo delay
+- `e 0`: disable echo
 - `t`: cycle stereo mode (`mono` → `abc` → `acb`)
 - `.`: stop all notes
 - `q`: quit

@@ -21,6 +21,7 @@
 #include "slopay-target-macos.h"
 #include "polyblep.h"
 #include "reverb.h"
+#include "echo.h"
 
 /* ----------------------------------------------------------------------- */
 
@@ -73,6 +74,7 @@ typedef struct {
   slopay_chip_t        *ay;
   polyblep_osc_t        oscs[MAX_POLYPHONY];
   reverb_t             *rev[2];
+  echo_t               *echo[2];
   slopay_target_macos_t audio_driver;
   int                   output_polyblep;
   int                   channel_to_note[MAX_POLYPHONY];
@@ -83,11 +85,13 @@ typedef struct {
   int                   env_period;
   int                   stereo_mode;
   size_t                reverb_delay;
+  size_t                echo_delay;
 } midiay_state_t;
 
 static midiay_state_t g_state = {
   .stereo_mode  = SLOPAY_CHIP_STEREO_MODE_MONO,
-  .reverb_delay = 0
+  .reverb_delay = 0,
+  .echo_delay   = 0
 };
 
 static int parse_register_write(const char *input, int *reg_out, int *val_out)
@@ -165,6 +169,27 @@ static int parse_master_volume_command(const char *input, int *value_out)
 
   *value_out = (int)value;
   return 1;
+}
+
+static int parse_effect_disable_command(const char *input, const char effect)
+{
+  const char *p;
+
+  if (input[0] != effect && input[0] != (char)(effect + ('a' - 'A')))
+    return 0;
+
+  p = input + 1;
+  while (*p == ' ' || *p == '\t')
+    p++;
+
+  if (*p != '0')
+    return 0;
+  p++;
+
+  while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')
+    p++;
+
+  return (*p == '\0');
 }
 
 static int play_mode_semitone_for_key(const int key)
@@ -246,6 +271,7 @@ static void render_audio(void *userdata, float *output, uint32_t frames)
     }
 
     for (int ch = 0; ch < REVERB_CHANNELS; ch++) {
+      sample[ch] = echo_process(g_state.echo[ch], sample[ch]);
       sample[ch] = reverb_process(g_state.rev[ch], sample[ch]);
       output[i * REVERB_CHANNELS + ch] = sample[ch] / 32767.0f; /* Scale to -1.0 to 1.0 */
     }
@@ -389,6 +415,42 @@ static void cyclereverbdelay(void)
     reverb_set_delay(g_state.rev[ch], g_state.reverb_delay);
 
   printf("Set reverb delay to %zu samples (%.2f ms)\n", g_state.reverb_delay, (double)g_state.reverb_delay / SAMPLE_RATE * 1000);
+}
+
+static void disablereverb(void)
+{
+  g_state.reverb_delay = 0;
+  for (int ch = 0; ch < REVERB_CHANNELS; ch++) {
+    reverb_set_delay(g_state.rev[ch], 0);
+    g_state.rev[ch]->size = 0;
+    g_state.rev[ch]->pos  = 0;
+  }
+
+  printf("Reverb disabled\n");
+}
+
+static void cycleechodelay(void)
+{
+  g_state.echo_delay = (g_state.echo_delay >> 1);
+  if (g_state.echo_delay < SAMPLE_RATE / 16)
+    g_state.echo_delay = SAMPLE_RATE;
+
+  for (int ch = 0; ch < REVERB_CHANNELS; ch++)
+    echo_set_delay(g_state.echo[ch], g_state.echo_delay);
+
+  printf("Set echo delay to %zu samples (%.2f ms)\n", g_state.echo_delay, (double)g_state.echo_delay / SAMPLE_RATE * 1000);
+}
+
+static void disableecho(void)
+{
+  g_state.echo_delay = 0;
+  for (int ch = 0; ch < REVERB_CHANNELS; ch++) {
+    echo_set_delay(g_state.echo[ch], 0);
+    g_state.echo[ch]->size = 0;
+    g_state.echo[ch]->pos  = 0;
+  }
+
+  printf("Echo disabled\n");
 }
 
 /* ----------------------------------------------------------------------- */
@@ -598,6 +660,7 @@ static const repl_key_command_t repl_key_commands[] = {
   { 'P', run_play_mode,    0 },
   { 'O', setenvperiod,     0 },
   { 'R', cyclereverbdelay, 0 },
+  { 'E', cycleechodelay,   0 },
   { 'T', cyclestereomode,  0 },
   { '.', key_release_all,  0 }
 };
@@ -617,7 +680,7 @@ static void repl(void)
   printf("Enter 'p' for play mode (single keypress notes)\n");
   printf("Enter 'v <0-127>' to set channel volume from MIDI scale\n");
   printf("Enter 'm <0-100>' to set master volume percent\n");
-  printf("Enter 's' to set envelope shape, 'o' to set envelope period, 'r' to set reverb delay, 't' to cycle stereo mode (mono/abc/acb), '.' to stop all notes, or 'q' to quit\n");
+  printf("Enter 's' to set envelope shape, 'o' to set envelope period, 'r' to set reverb delay, 'r 0' to disable reverb, 'e' to set echo delay, 'e 0' to disable echo, 't' to cycle stereo mode (mono/abc/acb), '.' to stop all notes, or 'q' to quit\n");
 
   for (;;) {
     int handled = 0;
@@ -629,17 +692,6 @@ static void repl(void)
     cmd = input[0];
     if (cmd >= 'a' && cmd <= 'z')
       cmd -= ('a' - 'A');
-
-    for (size_t i = 0; i < (sizeof(repl_key_commands) / sizeof(repl_key_commands[0])); i++) {
-      if (cmd == repl_key_commands[i].key) {
-        if (repl_key_commands[i].is_quit)
-          return;
-        if (repl_key_commands[i].action != NULL)
-          repl_key_commands[i].action();
-        handled = 1;
-        break;
-      }
-    }
 
     if (!handled && parse_master_volume_command(input, &master_volume_value)) {
       slopay_chip_set_volume(g_state.ay, master_volume_value);
@@ -657,6 +709,28 @@ static void repl(void)
       printf("Wrote %d to register %d\n", val, reg);
       handled = 1;
     }
+
+    if (!handled && parse_effect_disable_command(input, 'R')) {
+      disablereverb();
+      handled = 1;
+    }
+
+    if (!handled && parse_effect_disable_command(input, 'E')) {
+      disableecho();
+      handled = 1;
+    }
+
+    if (!handled)
+      for (size_t i = 0; i < (sizeof(repl_key_commands) / sizeof(repl_key_commands[0])); i++) {
+        if (cmd == repl_key_commands[i].key) {
+          if (repl_key_commands[i].is_quit)
+            return;
+          if (repl_key_commands[i].action != NULL)
+            repl_key_commands[i].action();
+          handled = 1;
+          break;
+        }
+      }
 
     if (!handled)
       printf("Invalid input. Use 'q' to quit\n");
@@ -702,6 +776,14 @@ int main(void)
     }
     g_state.rev[ch]->size = 0; /* Reverb OFF by default (bypass path in reverb_process). */
     g_state.rev[ch]->pos  = 0;
+
+    g_state.echo[ch] = echo_create(SAMPLE_RATE);
+    if (g_state.echo[ch] == NULL) {
+      printf("Failed to create echo\n");
+      goto failure;
+    }
+    g_state.echo[ch]->size = 0; /* Echo OFF by default (bypass path in echo_process). */
+    g_state.echo[ch]->pos  = 0;
   }
 
   if (setupMIDI() != 0) {
@@ -730,8 +812,10 @@ int main(void)
   slopay_target_macos_stop(&g_state.audio_driver);
   slopay_target_macos_cleanup(&g_state.audio_driver);
   teardownMIDI();
-  for (ch = REVERB_CHANNELS - 1; ch >= 0; ch--)
+  for (ch = REVERB_CHANNELS - 1; ch >= 0; ch--) {
+    echo_destroy(g_state.echo[ch]);
     reverb_destroy(g_state.rev[ch]);
+  }
   slopay_chip_destroy(g_state.ay);
 
   printf("Test completed\n");
@@ -742,6 +826,10 @@ failure:
   slopay_target_macos_cleanup(&g_state.audio_driver);
   teardownMIDI();
   for (ch = REVERB_CHANNELS - 1; ch >= 0; ch--) {
+    if (g_state.echo[ch] != NULL) {
+      echo_destroy(g_state.echo[ch]);
+      g_state.echo[ch] = NULL;
+    }
     if (g_state.rev[ch] != NULL) {
       reverb_destroy(g_state.rev[ch]);
       g_state.rev[ch] = NULL;

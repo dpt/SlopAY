@@ -52,6 +52,7 @@ if(APPLE)
     midi-ay/midiay.c
     midi-ay/polyblep.c
     midi-ay/reverb.c
+    midi-ay/echo.c
   )
 
   target_include_directories(MIDIAY PRIVATE
