@@ -18,17 +18,21 @@
 /* ----------------------------------------------------------------------- */
 
 /* AY configuration */
-#define AY_FXP                 (8) /* fixed point precision bits */
-#define AY_ENABLE_FIXUP        (1) /* synchronise tone generators */
+#define AY_FXP                          (8) /* fixed point precision bits */
+#define AY_ENABLE_FIXUP                 (1) /* synchronise tone generators */
 
 /* ----------------------------------------------------------------------- */
 
-/* Noise limits */
-#define AY_NOISE_PITCH_MAX  (0x1F) /* 0..31 => high pitch to low */
+/* Register masks */
+#define AY_REG_MASK_BYTE            (0xFFu)
+#define AY_REG_MASK_NIBBLE          AY_COARSE_PITCH_MAX
+#define AY_REG_MASK_MIXER           AY_MIXER_MASK
+#define AY_REG_MASK_VOLUME          AY_VOLUME_MAX
+#define AY_REG_MASK_ENVELOPE_SHAPE  AY_ENVELOPE_SHAPE_MAX
 
 /* Envelope limits */
-#define AY_ENV_MIN_VOL      (0x00)
-#define AY_ENV_MAX_VOL      (0x1F)
+#define AY_ENV_MIN_VOL               (0x00)
+#define AY_ENV_MAX_VOL               AY_VOLUME_MAX
 
 /* ----------------------------------------------------------------------- */
 
@@ -80,13 +84,13 @@ typedef struct {
 
 /* A mixer */
 typedef struct {
-  int                       master_volume; /* 0..100 */
+  int                       master_volume; /* 0..AY_MASTER_VOLUME_MAX */
   slopay_chip_stereo_mode_t stereo_mode;
 } aymixer_t;
 
 /* AY state */
 struct slopay_chip {
-  uint_least8_t regs[16]; /* 16 registers (0-15) */
+  uint_least8_t regs[AY_REG_COUNT]; /* AY registers */
 
   /* Timing */
   int_least32_t clocks_per_sample; /* (clock_freq over sample_rate) << AY_FXP */
@@ -112,12 +116,12 @@ slopay_chip_t *slopay_chip_create(int clock_freq, int sample_rate)
   ay->clocks_per_sample = (clock_freq << AY_FXP) / sample_rate;
 
   /* Initialise noise (lfsr never becomes zero) */
-  ay->noise.lfsr = 1;
+  ay->noise.lfsr   = 1;
   ay->noise.output = 1;
 
   /* Set default configuration */
-  ay->mixer.master_volume = 100;
-  ay->mixer.stereo_mode = SLOPAY_CHIP_STEREO_MODE_ABC;
+  ay->mixer.master_volume = AY_MASTER_VOLUME_MAX;
+  ay->mixer.stereo_mode   = SLOPAY_CHIP_STEREO_MODE_ABC;
 
   return ay;
 }
@@ -132,21 +136,21 @@ void slopay_chip_destroy(slopay_chip_t *ay)
 /* Set a register value */
 void slopay_chip_write_register(slopay_chip_t *ay, slopay_chip_reg_t reg, uint8_t value)
 {
-  static const uint8_t reg_masks[16] = {
-    [AY_REG_CHANNEL_A_FINE_PITCH]     = 0xFFu,
-    [AY_REG_CHANNEL_A_COARSE_PITCH]   = 0x0Fu,
-    [AY_REG_CHANNEL_B_FINE_PITCH]     = 0xFFu,
-    [AY_REG_CHANNEL_B_COARSE_PITCH]   = 0x0Fu,
-    [AY_REG_CHANNEL_C_FINE_PITCH]     = 0xFFu,
-    [AY_REG_CHANNEL_C_COARSE_PITCH]   = 0x0Fu,
+  static const uint8_t reg_masks[AY_REG_COUNT] = {
+    [AY_REG_CHANNEL_A_FINE_PITCH]     = AY_REG_MASK_BYTE,
+    [AY_REG_CHANNEL_A_COARSE_PITCH]   = AY_REG_MASK_NIBBLE,
+    [AY_REG_CHANNEL_B_FINE_PITCH]     = AY_REG_MASK_BYTE,
+    [AY_REG_CHANNEL_B_COARSE_PITCH]   = AY_REG_MASK_NIBBLE,
+    [AY_REG_CHANNEL_C_FINE_PITCH]     = AY_REG_MASK_BYTE,
+    [AY_REG_CHANNEL_C_COARSE_PITCH]   = AY_REG_MASK_NIBBLE,
     [AY_REG_NOISE_PITCH]              = AY_NOISE_PITCH_MAX,
-    [AY_REG_MIXER]                    = 0x3Fu,
-    [AY_REG_CHANNEL_A_VOLUME]         = 0x1Fu,
-    [AY_REG_CHANNEL_B_VOLUME]         = 0x1Fu,
-    [AY_REG_CHANNEL_C_VOLUME]         = 0x1Fu,
-    [AY_REG_ENVELOPE_FINE_DURATION]   = 0xFFu,
-    [AY_REG_ENVELOPE_COARSE_DURATION] = 0xFFu,
-    [AY_REG_ENVELOPE_SHAPE]           = 0x0Fu,
+    [AY_REG_MIXER]                    = AY_REG_MASK_MIXER,
+    [AY_REG_CHANNEL_A_VOLUME]         = AY_REG_MASK_VOLUME,
+    [AY_REG_CHANNEL_B_VOLUME]         = AY_REG_MASK_VOLUME,
+    [AY_REG_CHANNEL_C_VOLUME]         = AY_REG_MASK_VOLUME,
+    [AY_REG_ENVELOPE_FINE_DURATION]   = AY_REG_MASK_BYTE,
+    [AY_REG_ENVELOPE_COARSE_DURATION] = AY_REG_MASK_BYTE,
+    [AY_REG_ENVELOPE_SHAPE]           = AY_REG_MASK_ENVELOPE_SHAPE,
   };
 
   int channel;
@@ -167,7 +171,7 @@ void slopay_chip_write_register(slopay_chip_t *ay, slopay_chip_reg_t reg, uint8_
   case AY_REG_CHANNEL_C_COARSE_PITCH:
     channel = (reg - AY_REG_CHANNEL_A_FINE_PITCH) >> 1;
     ay->tone[channel].period = AY_MAX(ay->regs[AY_REG_CHANNEL_A_FINE_PITCH + channel * 2] +
-                                      (ay->regs[AY_REG_CHANNEL_A_COARSE_PITCH + channel * 2] & 0x0F) * 256, 1);
+                                      (ay->regs[AY_REG_CHANNEL_A_COARSE_PITCH + channel * 2] & AY_REG_MASK_NIBBLE) * 256, 1);
     break;
 
   case AY_REG_NOISE_PITCH:
@@ -183,8 +187,8 @@ void slopay_chip_write_register(slopay_chip_t *ay, slopay_chip_reg_t reg, uint8_
   case AY_REG_ENVELOPE_SHAPE:
     ay->env.wave.counter = 0; /* restart envelope from the beginning of a full period */
     ay->env.wave.phase   = 0;
-    ay->env.shape        = value;
-    ay->env.volume       = (value & 4) ? AY_ENV_MIN_VOL : AY_ENV_MAX_VOL; /* match attack/decay shape */
+    ay->env.shape        = value & AY_REG_MASK_ENVELOPE_SHAPE;
+    ay->env.volume       = (value & AY_ENVELOPE_SHAPE_ATTACK_BIT) ? AY_ENV_MIN_VOL : AY_ENV_MAX_VOL; /* match attack/decay shape */
     break;
   default:
     break;
@@ -193,7 +197,7 @@ void slopay_chip_write_register(slopay_chip_t *ay, slopay_chip_reg_t reg, uint8_
 
 uint8_t slopay_chip_read_register(slopay_chip_t *ay, slopay_chip_reg_t reg)
 {
-  return ay->regs[reg];
+  return (reg <= AY_REG_ENVELOPE_SHAPE) ? ay->regs[reg] : 0;
 }
 
 /* Update tone channel output */
@@ -256,22 +260,22 @@ static void ay_env_off(ayenv_t *env)
 static void ay_env_halfclock(ayenv_t *env)
 {
   static ay_envfn_t *const envfn[16][2] = {
-    { ay_env_decay,  ay_env_off },    /*  0 */
-    { ay_env_decay,  ay_env_off },    /*  1 - not defined */
-    { ay_env_decay,  ay_env_off },    /*  2 - not defined */
-    { ay_env_decay,  ay_env_off },    /*  3 - not defined */
-    { ay_env_attack, ay_env_off },    /*  4 */
-    { ay_env_attack, ay_env_off },    /*  5 - not defined */
-    { ay_env_attack, ay_env_off },    /*  6 - not defined */
-    { ay_env_attack, ay_env_off },    /*  7 - not defined */
-    { ay_env_decay,  ay_env_decay },  /*  8 */
-    { ay_env_decay,  ay_env_off },    /*  9 */
+    { ay_env_decay,  ay_env_off    }, /*  0 */
+    { ay_env_decay,  ay_env_off    }, /*  1 - not defined */
+    { ay_env_decay,  ay_env_off    }, /*  2 - not defined */
+    { ay_env_decay,  ay_env_off    }, /*  3 - not defined */
+    { ay_env_attack, ay_env_off    }, /*  4 */
+    { ay_env_attack, ay_env_off    }, /*  5 - not defined */
+    { ay_env_attack, ay_env_off    }, /*  6 - not defined */
+    { ay_env_attack, ay_env_off    }, /*  7 - not defined */
+    { ay_env_decay,  ay_env_decay  }, /*  8 */
+    { ay_env_decay,  ay_env_off    }, /*  9 */
     { ay_env_decay,  ay_env_attack }, /* 10 */
-    { ay_env_decay,  ay_env_hold },   /* 11 */
+    { ay_env_decay,  ay_env_hold   }, /* 11 */
     { ay_env_attack, ay_env_attack }, /* 12 */
-    { ay_env_attack, ay_env_hold },   /* 13 */
-    { ay_env_attack, ay_env_decay },  /* 14 */
-    { ay_env_attack, ay_env_off },    /* 15 */
+    { ay_env_attack, ay_env_hold   }, /* 13 */
+    { ay_env_attack, ay_env_decay  }, /* 14 */
+    { ay_env_attack, ay_env_off    }, /* 15 */
   };
 
   if (++env->wave.counter >= env->wave.period) {
@@ -296,7 +300,7 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
   int      t;
   int      ch;
   uint8_t  mixer_reg;
-  int16_t  mixed[AY_CHANNELS];
+  int      mixed[AY_CHANNELS];
   unsigned channel_active;
   int      output_l, output_r; /* these hold multiple channels */
   int      final_l, final_r;
@@ -415,8 +419,8 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
   }
 
   /* Apply master volume */
-  output_l = (output_l * ay->mixer.master_volume) / 100;
-  output_r = (output_r * ay->mixer.master_volume) / 100;
+  output_l = (output_l * ay->mixer.master_volume) / AY_MASTER_VOLUME_MAX;
+  output_r = (output_r * ay->mixer.master_volume) / AY_MASTER_VOLUME_MAX;
 
   /* Clamp output to 16-bit range */
   final_l = AY_CLAMP(output_l, -32768, 32767);
@@ -427,7 +431,7 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
 
 void slopay_chip_set_volume(slopay_chip_t *ay, int volume)
 {
-  ay->mixer.master_volume = AY_CLAMP(volume, 0, 100);
+  ay->mixer.master_volume = AY_CLAMP(volume, 0, AY_MASTER_VOLUME_MAX);
 }
 
 void slopay_chip_set_stereo_mode(slopay_chip_t *ay, slopay_chip_stereo_mode_t mode)

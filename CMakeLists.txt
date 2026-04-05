@@ -12,12 +12,12 @@ if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 add_executable(SlopAY
-  slop-ay/slopay.c
-  slop-ay/slopay-loader.c
-  slop-ay/slopay-z80.c
   lib/slopay-chip.c
-  slop-ay/slopay-target-wave.c
+  slop-ay/slopay-loader.c
   slop-ay/slopay-target-midi.c
+  slop-ay/slopay-target-wave.c
+  slop-ay/slopay-z80.c
+  slop-ay/slopay.c
 )
 
 target_include_directories(SlopAY PRIVATE
@@ -47,9 +47,9 @@ if(APPLE)
   )
 
   add_executable(MIDIAY
-    midi-ay/midiay.c
     lib/slopay-chip.c
     lib/slopay-target-macos.c
+    midi-ay/midiay.c
     midi-ay/polyblep.c
     midi-ay/reverb.c
   )
