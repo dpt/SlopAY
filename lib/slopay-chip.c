@@ -9,12 +9,6 @@
 
 /* Credit: Strongly inspired by https://github.com/ponceto/aym-js */
 
-// TODO
-//
-// When to reset phases? When registers are set?
-// Is it worth using chars or shorts in the wave/env generator structs?
-// Do we run the wave generators constantly or do they shut down when unused?
-
 #include <stdint.h>
 
 #include "slopay-chip.h"
@@ -187,9 +181,10 @@ void slopay_chip_write_register(slopay_chip_t *ay, slopay_chip_reg_t reg, uint8_
     break;
 
   case AY_REG_ENVELOPE_SHAPE:
-    ay->env.wave.phase = 0;
-    ay->env.shape      = value;
-    ay->env.volume     = (value & 4) ? AY_ENV_MIN_VOL : AY_ENV_MAX_VOL; /* match attack/decay shape */
+    ay->env.wave.counter = 0; /* restart envelope from the beginning of a full period */
+    ay->env.wave.phase   = 0;
+    ay->env.shape        = value;
+    ay->env.volume       = (value & 4) ? AY_ENV_MIN_VOL : AY_ENV_MAX_VOL; /* match attack/decay shape */
     break;
   default:
     break;
@@ -245,7 +240,11 @@ static void ay_env_decay(ayenv_t *env)
 
 static void ay_env_hold(ayenv_t *env)
 {
-  env->volume = AY_ENV_MAX_VOL;
+  /* Hold at whatever volume the preceding ramp settled on.
+   * Shape 13 (attack→hold) arrives here at AY_ENV_MAX_VOL;
+   * shape 11 (decay→hold) arrives here at AY_ENV_MIN_VOL.
+   * Forcing a fixed level here would be wrong for one of the two cases. */
+  (void)env;
 }
 
 static void ay_env_off(ayenv_t *env)
@@ -306,7 +305,10 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
   whole_clocks = total_clocks_fxp >> (AY_FXP + 4); /* + 4 is the 16 divider */
   ay->clock_error = total_clocks_fxp - (whole_clocks << (AY_FXP + 4));
 
-  /* Generate two half waves for everything */
+  /* All generators run unconditionally, matching real AY-3-8912 behaviour.
+   * The mixer register and volume registers gate the *output* only; stopping
+   * a generator here would corrupt phase continuity and LFSR state when a
+   * channel is re-enabled. */
   for (t = 0; t < whole_clocks; t++) {
     if (AY_ENABLE_FIXUP) {
       /* If two tone generators have the same period, but different counter and phase, then synchronise them. */
