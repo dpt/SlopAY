@@ -2,7 +2,8 @@ SlopAY & MIDIAY
 ===============
 
 SlopAY is a mostly vibe-coded AY player in C. It includes a Z80 emulator and support for loading AY files, rendering
-audio in real time on macOS, or exporting to WAV. It can also print a piano roll of the notes being played.
+audio in real time on macOS, exporting to WAV or MIDI, and printing a piano roll of the notes being played. On other
+POSIX systems it runs headless unless writing WAV output.
 
 **Supported formats and platforms:**
 - **ZX Spectrum 48K:** beeper-only tracks
@@ -21,7 +22,7 @@ Executables
 
 The project builds two executables:
 
-- `SlopAY` (all platforms; real-time playback on macOS, WAV export everywhere)
+- `SlopAY` (POSIX; real-time playback on macOS, headless elsewhere, WAV/MIDI export available)
 - `MIDIAY` (macOS only)
 
 ### SlopAY syntax
@@ -111,6 +112,9 @@ MIDIAY
 ```
 
 `MIDIAY` starts an interactive shell with CoreMIDI/CoreAudio input and AY control commands.
+
+`MIDIAY` remains macOS-only. On other POSIX systems, `SlopAY` can still be used for headless piano-roll inspection and
+WAV/MIDI export.
 
 #### Command mode
 

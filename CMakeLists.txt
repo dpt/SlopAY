@@ -40,6 +40,10 @@ if(APPLE)
     lib/slopay-target-macos.c
   )
 
+  target_compile_definitions(SlopAY PRIVATE
+    SLOPAY_HAVE_MACOS_AUDIO=1
+  )
+
   target_link_libraries(SlopAY PRIVATE
     ${COREAUDIO_FRAMEWORK}
     ${AUDIOTOOLBOX_FRAMEWORK}
@@ -60,6 +64,7 @@ if(APPLE)
   )
 
   target_compile_definitions(MIDIAY PRIVATE
+    SLOPAY_HAVE_MACOS_AUDIO=1
     SLOPAY_VERSION_STRING="${PROJECT_VERSION}"
   )
 

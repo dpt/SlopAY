@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 #include <unistd.h>
 #include <getopt.h>
@@ -20,7 +21,9 @@
 #include "slopay-loader.h"
 #include "slopz80.h"
 #include "slopay-chip.h"
+#ifdef SLOPAY_HAVE_MACOS_AUDIO
 #include "slopay-target-macos.h"
+#endif
 #include "slopay-target-wave.h"
 #include "slopay-target-midi.h"
 
@@ -66,7 +69,9 @@ typedef struct {
 typedef struct {
   slopz80_t              *cpu;
   slopay_chip_t            *ay;
+#ifdef SLOPAY_HAVE_MACOS_AUDIO
   slopay_target_macos_t     audio_driver;
+#endif
   uint8_t                   selected_reg;
   unsigned                  total_out_count;
   unsigned                  ay_select_count;
@@ -222,8 +227,10 @@ static void slopay_sigint_handler(int signum)
   slopay_stop_requested = 1;
 }
 
+static void render_audio(void *userdata, float *output, uint32_t frames);
 static void slopay_inject_interrupt(slopz80_t *cpu);
 
+#ifdef SLOPAY_HAVE_MACOS_AUDIO
 static void slopay_sleep_frame(void)
 {
   struct timespec req;
@@ -232,6 +239,25 @@ static void slopay_sleep_frame(void)
   req.tv_nsec = 20 * 1000 * 1000; /* 20ms for 50Hz frame rate */
   nanosleep(&req, NULL);
 }
+#endif
+
+#ifndef SLOPAY_HAVE_MACOS_AUDIO
+static void slopay_render_headless(slopay_io_t *io)
+{
+  float scratch[1024 * 2];
+
+  if (io == NULL)
+    return;
+
+  slopay_stop_requested = 0;
+  signal(SIGINT, slopay_sigint_handler);
+
+  while (io->played_frames < io->target_frames && !slopay_stop_requested)
+    render_audio(io, scratch, 1024);
+
+  signal(SIGINT, SIG_DFL);
+}
+#endif
 
 static size_t rel_ptr(size_t base, int16_t off)
 {
@@ -794,8 +820,10 @@ static void slopay_run_z80(slopay_loader_file_t *file,
   slopz80_t *cpu;
   slopay_io_t io;
   int frame_count;
+#ifdef SLOPAY_HAVE_MACOS_AUDIO
   int frame;
   int audio_started = 0;
+#endif
 
   profile = slopay_machine_profile(machine);
   effective_interrupt_rate = profile->interrupt_rate;
@@ -928,7 +956,8 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     slopay_target_wave_cleanup(&wav_driver);
     printf("WAV written: %s\n", wav_filename);
 
-   } else {
+    } else {
+#ifdef SLOPAY_HAVE_MACOS_AUDIO
      /* ---- macOS Core Audio real-time output mode ----------------------- */
      if (slopay_target_macos_init(&io.audio_driver, sample_rate, render_audio, &io) != noErr) {
        fprintf(stderr, "Error: Failed to initialize macOS audio driver\n");
@@ -959,6 +988,12 @@ static void slopay_run_z80(slopay_loader_file_t *file,
 
     slopay_target_macos_stop(&io.audio_driver);
     audio_started = 0;
+#else
+      fprintf(stderr,
+              "Notice: Live audio output is unavailable on this platform; "
+              "running headless.\n");
+      slopay_render_headless(&io);
+#endif
   }
 
   slopay_finalize_midi_export(&io);
@@ -981,9 +1016,11 @@ static void slopay_run_z80(slopay_loader_file_t *file,
   slopay_dump_missing_opcodes(&missing_stats);
 
   if (wav_filename == NULL) {
+#ifdef SLOPAY_HAVE_MACOS_AUDIO
     if (audio_started)
       slopay_target_macos_stop(&io.audio_driver);
     slopay_target_macos_cleanup(&io.audio_driver);
+#endif
   }
   slopay_chip_destroy(io.ay);
   slopz80_destroy(cpu);
@@ -994,6 +1031,8 @@ static void print_usage(const char *prog)
   printf("Usage: %s [-V] [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-P <machine>] [-I <50|300>] [-r <Hz>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>\n", prog);
   printf("\n");
   printf("Loads and displays information about an AY music file.\n");
+  printf("Real-time audio output is available on macOS; other POSIX builds\n");
+  printf("run headless unless writing WAV output.\n");
   printf("\n");
   printf("Options:\n");
   printf("  -v, --volume <percent>          AY volume percent (0-100, default 100)\n");
