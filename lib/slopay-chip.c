@@ -20,6 +20,7 @@
 /* AY configuration */
 #define AY_FXP                          (8) /* fixed point precision bits */
 #define AY_ENABLE_FIXUP                 (1) /* synchronise tone generators */
+#define AY_DC_BLOCK_R                   (0.995f) /* one-pole high-pass feedback */
 
 /* ----------------------------------------------------------------------- */
 
@@ -86,6 +87,11 @@ typedef struct {
 typedef struct {
   int                       master_volume; /* 0..AY_MASTER_VOLUME_MAX */
   slopay_chip_stereo_mode_t stereo_mode;
+
+  float                     dc_prev_in_l;
+  float                     dc_prev_in_r;
+  float                     dc_prev_out_l;
+  float                     dc_prev_out_r;
 } aymixer_t;
 
 /* AY state */
@@ -293,6 +299,17 @@ static void ay_fixup_tone(aytone_t *l, const aytone_t *r)
   }
 }
 
+static int ay_dc_block(float *prev_in, float *prev_out, int input)
+{
+  const float x = (float)input;
+  const float y = (x - *prev_in) + (AY_DC_BLOCK_R * *prev_out);
+
+  *prev_in  = x;
+  *prev_out = y;
+
+  return (int)y;
+}
+
 slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
 {
   int     total_clocks_fxp;
@@ -358,7 +375,7 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
       /* Apply envelope-generated volume */
       amplitude = ay->env.volume * 32767 / AY_ENV_MAX_VOL;
 
-    mixed[ch] = (output > 0) ? amplitude : -amplitude;
+    mixed[ch] = (output > 0) ? amplitude : 0;
   }
 
   if (ay->mixer.stereo_mode != SLOPAY_CHIP_STEREO_MODE_MONO) {
@@ -382,6 +399,10 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
     const int mono_sum = mixed[0] + mixed[1] + mixed[2];
     output_l = output_r = mono_sum / 3;
   }
+
+  /* Unipolar channel summing introduces DC; remove it before volume/clamp. */
+  output_l = ay_dc_block(&ay->mixer.dc_prev_in_l, &ay->mixer.dc_prev_out_l, output_l);
+  output_r = ay_dc_block(&ay->mixer.dc_prev_in_r, &ay->mixer.dc_prev_out_r, output_r);
 
   /* Apply master volume */
   output_l = (output_l * ay->mixer.master_volume) / AY_MASTER_VOLUME_MAX;
