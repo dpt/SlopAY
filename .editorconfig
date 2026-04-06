@@ -13,3 +13,11 @@ trim_trailing_whitespace = false
 indent_style = space
 indent_size = 2
 
+[CMakeLists.txt]
+indent_style = space
+indent_size = 2
+
+[*.cmake]
+indent_style = space
+indent_size = 2
+

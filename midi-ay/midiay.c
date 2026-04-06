@@ -20,9 +20,9 @@
 
 #include "slopay-chip.h"
 #include "slopay-target-macos.h"
-#include "arpeggiator.h"
-#include "chords.h"
-#include "polyblep.h"
+#include "notes/arpeggiator.h"
+#include "notes/chords.h"
+#include "oscillators/polyblep.h"
 #include "effects/reverb.h"
 #include "effects/echo.h"
 

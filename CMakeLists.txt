@@ -53,12 +53,12 @@ if(APPLE)
   add_executable(MIDIAY
     lib/slopay-chip.c
     lib/slopay-target-macos.c
-    midi-ay/arpeggiator.c
-    midi-ay/chords.c
     midi-ay/effects/echo.c
     midi-ay/effects/reverb.c
     midi-ay/midiay.c
-    midi-ay/polyblep.c
+    midi-ay/notes/arpeggiator.c
+    midi-ay/notes/chords.c
+    midi-ay/oscillators/polyblep.c
   )
 
   target_include_directories(MIDIAY PRIVATE
