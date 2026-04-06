@@ -124,6 +124,7 @@ static midiay_state_t g_state = {
   .channel_envelope_enabled = { 0, 0, 0 }
 };
 
+/* Parse a direct AY register write command in the form "<reg> <value>". */
 static int parse_register_write(const char *input, int *reg_out, int *val_out)
 {
   char *endptr;
@@ -151,6 +152,7 @@ static int parse_register_write(const char *input, int *reg_out, int *val_out)
   return 1;
 }
 
+/* Parse the channel volume command payload. */
 static int parse_channel_volume_command(const char *input, int *value_out)
 {
   char *endptr;
@@ -176,6 +178,7 @@ static int parse_channel_volume_command(const char *input, int *value_out)
   return 1;
 }
 
+/* Parse the master volume command payload. */
 static int parse_master_volume_command(const char *input, int *value_out)
 {
   char *endptr;
@@ -206,6 +209,7 @@ static int parse_master_volume_command(const char *input, int *value_out)
   return 1;
 }
 
+/* Parse an effect disable command of the form "<key> 0". */
 static int parse_effect_disable_command(const char *input, const char effect)
 {
   const char *p;
@@ -227,6 +231,7 @@ static int parse_effect_disable_command(const char *input, const char effect)
   return (*p == '\0');
 }
 
+/* Parse per-channel envelope enable/disable input. */
 static int parse_envelope_channel_command(const char *input, int *channel_out, int *enabled_out)
 {
   const char *p;
@@ -269,6 +274,7 @@ static int parse_envelope_channel_command(const char *input, int *channel_out, i
   return 1;
 }
 
+/* Map a play-mode keyboard key to its semitone offset. */
 static int play_mode_semitone_for_key(const int key)
 {
   switch (key) {
@@ -289,6 +295,7 @@ static int play_mode_semitone_for_key(const int key)
   }
 }
 
+/* Put stdin into raw mode for single-key play-mode input. */
 static int terminal_enable_raw_mode(struct termios *saved)
 {
   struct termios raw;
@@ -306,12 +313,14 @@ static int terminal_enable_raw_mode(struct termios *saved)
   return tcsetattr(STDIN_FILENO, TCSANOW, &raw);
 }
 
+/* Restore terminal mode saved before entering play mode. */
 static void terminal_restore_mode(const struct termios *saved)
 {
   if (saved != NULL)
     tcsetattr(STDIN_FILENO, TCSANOW, saved);
 }
 
+/* Read a single key from stdin while in raw mode. */
 static int read_single_key(int *key)
 {
   unsigned char ch;
@@ -328,6 +337,7 @@ static void key_hold(int note);
 static void key_release(int note);
 static void key_release_all(void);
 
+/* Apply the cached volume/envelope state to one AY channel register. */
 static void apply_channel_volume_register(const int ch)
 {
   const uint8_t reg_value = (uint8_t)((g_state.channel_volume_level[ch] & 0x0Fu) |
@@ -337,6 +347,7 @@ static void apply_channel_volume_register(const int ch)
                              reg_value);
 }
 
+/* Enable or disable envelope-controlled volume for one AY channel. */
 static void set_channel_envelope_enabled(const int ch, const int enabled)
 {
   if (ch < 0 || ch >= MAX_POLYPHONY)
@@ -349,6 +360,7 @@ static void set_channel_envelope_enabled(const int ch, const int enabled)
          (char)('A' + ch));
 }
 
+/* Convert the arpeggiator step duration from milliseconds to samples. */
 static int midi_arp_step_samples(void)
 {
   int step_samples = (SAMPLE_RATE * g_state.arp_step_ms) / 1000;
@@ -357,6 +369,7 @@ static int midi_arp_step_samples(void)
   return step_samples;
 }
 
+/* Release the note currently sounding from the MIDI arpeggiator. */
 static void midi_arp_release_current_note(void)
 {
   if (g_state.midi_arp_current_note >= 0) {
@@ -365,6 +378,7 @@ static void midi_arp_release_current_note(void)
   }
 }
 
+/* Rebuild the MIDI arpeggiator note pool from held roots/chords. */
 static void midi_arp_refresh_notes(void)
 {
   int notes[ARPEGGIATOR_MAX_NOTES];
@@ -405,6 +419,7 @@ static void midi_arp_refresh_notes(void)
   arpeggiator_set_notes(&g_state.midi_arp, notes, (size_t)count);
 }
 
+/* Advance the MIDI arpeggiator by one step and update sounding note. */
 static void midi_arp_tick_once(void)
 {
   int next_note;
@@ -423,6 +438,7 @@ static void midi_arp_tick_once(void)
   g_state.midi_arp_current_note = next_note;
 }
 
+/* Reconcile active notes when MIDI arpeggiator mode is toggled. */
 static void midi_arp_sync_enabled_state(void)
 {
   arpeggiator_set_enabled(&g_state.midi_arp, g_state.arp_enabled);
@@ -454,6 +470,7 @@ static void midi_arp_sync_enabled_state(void)
 
 /* ----------------------------------------------------------------------- */
 
+/* Render one audio buffer and drive time-based MIDI arpeggiator ticks. */
 static void render_audio(void *userdata, float *output, uint32_t frames)
 {
   int16_t              sample[REVERB_CHANNELS];
@@ -494,6 +511,7 @@ static void render_audio(void *userdata, float *output, uint32_t frames)
 
 /* ----------------------------------------------------------------------- */
 
+/* Start a note on the first available synth voice. */
 static void key_hold(int note)
 {
   int ch;
@@ -541,6 +559,7 @@ static void key_hold(int note)
   g_state.channel_to_note[ch] = note;
 }
 
+/* Stop a currently playing note if present. */
 static void key_release(int note)
 {
   int ch;
@@ -561,6 +580,7 @@ static void key_release(int note)
   g_state.channel_to_note[ch] = 0;
 }
 
+/* Stop all active voices and clear MIDI/chord/arpeggiator tracking. */
 static void key_release_all(void)
 {
   int ch;
@@ -586,6 +606,7 @@ static void key_release_all(void)
   g_state.midi_arp_samples_until_step = midi_arp_step_samples();
 }
 
+/* Set all channel volumes from a normalized MIDI volume value. */
 static void setchannelvol(float midi_volume)
 {
   int ch;
@@ -599,12 +620,14 @@ static void setchannelvol(float midi_volume)
   }
 }
 
+/* Cycle the AY envelope shape register. */
 static void setenvshape(void)
 {
   g_state.envshape = (g_state.envshape + 1) % 16;
   printf("Setting envelope shape to %d\n", g_state.envshape);
 }
 
+/* Cycle the AY envelope period register value. */
 static void setenvperiod(void)
 {
   g_state.env_period = (g_state.env_period + 16) % 256;
@@ -613,6 +636,7 @@ static void setenvperiod(void)
   slopay_chip_write_register(g_state.ay, AY_REG_ENVELOPE_COARSE_DURATION, g_state.env_period);
 }
 
+/* Cycle stereo routing mode and apply it to the chip. */
 static void cyclestereomode(void)
 {
   const char *name;
@@ -630,6 +654,7 @@ static void cyclestereomode(void)
   printf("Setting stereo mode to %s\n", name);
 }
 
+/* Cycle the reverb delay through preset values. */
 static void cyclereverbdelay(void)
 {
   g_state.reverb_delay = (g_state.reverb_delay >> 1);
@@ -642,6 +667,7 @@ static void cyclereverbdelay(void)
   printf("Set reverb delay to %zu samples (%.2f ms)\n", g_state.reverb_delay, (double)g_state.reverb_delay / SAMPLE_RATE * 1000);
 }
 
+/* Disable reverb and reset its state buffers. */
 static void disablereverb(void)
 {
   g_state.reverb_delay = 0;
@@ -654,6 +680,7 @@ static void disablereverb(void)
   printf("Reverb disabled\n");
 }
 
+/* Cycle the echo delay through preset values. */
 static void cycleechodelay(void)
 {
   g_state.echo_delay = (g_state.echo_delay >> 1);
@@ -666,6 +693,7 @@ static void cycleechodelay(void)
   printf("Set echo delay to %zu samples (%.2f ms)\n", g_state.echo_delay, (double)g_state.echo_delay / SAMPLE_RATE * 1000);
 }
 
+/* Disable echo and reset its state buffers. */
 static void disableecho(void)
 {
   g_state.echo_delay = 0;
@@ -678,6 +706,7 @@ static void disableecho(void)
   printf("Echo disabled\n");
 }
 
+/* Toggle global chord mode and refresh MIDI arpeggiator notes. */
 static void togglechordmode(void)
 {
   g_state.chord_enabled = !g_state.chord_enabled;
@@ -687,6 +716,7 @@ static void togglechordmode(void)
   }
 }
 
+/* Cycle the active chord type and refresh MIDI arpeggiator notes. */
 static void cyclechordtype(void)
 {
   g_state.chord_type = (chord_t)((g_state.chord_type + 1) % CHORD_TYPE__LIMIT);
@@ -700,6 +730,7 @@ static void cyclechordtype(void)
 /* ----------------------------------------------------------------------- */
 
 
+/* Handle a MIDI note-on event with chord and arpeggiator logic. */
 static void midi_note_on(int note)
 {
   if (note < 0 || note >= MIDI_NOTE_COUNT)
@@ -738,6 +769,7 @@ static void midi_note_on(int note)
   g_state.midi_chord_active[note] = 1;
 }
 
+/* Handle a MIDI note-off event with chord and arpeggiator logic. */
 static void midi_note_off(int note)
 {
   if (note < 0 || note >= MIDI_NOTE_COUNT)
@@ -763,6 +795,7 @@ static void midi_note_off(int note)
   key_release(note);
 }
 
+/* Decode incoming CoreMIDI packets and dispatch supported message types. */
 static void midiMessageCallback(const MIDIPacketList *pktList, void *refCon, void *connRefCon) {
   const MIDIPacket *packet = pktList->packet;
   (void)refCon;
@@ -836,6 +869,7 @@ static void midiMessageCallback(const MIDIPacketList *pktList, void *refCon, voi
   }
 }
 
+/* Create MIDI client/input port and connect all available sources. */
 static int setupMIDI(void)
 {
   const ItemCount sourceCount = MIDIGetNumberOfSources();
@@ -861,6 +895,7 @@ static int setupMIDI(void)
   return 0;
 }
 
+/* Dispose MIDI input resources created by setupMIDI(). */
 static void teardownMIDI(void)
 {
   if (g_state.inputPort != 0) {
@@ -873,6 +908,7 @@ static void teardownMIDI(void)
   }
 }
 
+/* Print current play-mode state including chord and arpeggiator settings. */
 static void play_mode_print_status(int play_octave,
                                    int note_ms,
                                    int chord_enabled,
@@ -889,6 +925,7 @@ static void play_mode_print_status(int play_octave,
   printf("\n");
 }
 
+/* Print a compact chord status line before each REPL prompt. */
 static void repl_print_chord_status(void)
 {
   printf("MIDI chord mode: %s", g_state.chord_enabled ? "on" : "off");
@@ -900,6 +937,7 @@ static void repl_print_chord_status(void)
 
 /* ----------------------------------------------------------------------- */
 
+/* Run the interactive single-key play mode loop. */
 static void run_play_mode(void)
 {
   struct termios saved;
@@ -1091,6 +1129,7 @@ static const repl_key_command_t repl_key_commands[] = {
 
 /* ----------------------------------------------------------------------- */
 
+/* Print the command-mode help table. */
 static void repl_print_help_table(void)
 {
   printf("+-------------+-------------------------------------+\n");
@@ -1117,6 +1156,7 @@ static void repl_print_help_table(void)
 
 /* ----------------------------------------------------------------------- */
 
+/* Run the line-oriented REPL command loop. */
 static void repl(void)
 {
   char input[100];
@@ -1193,6 +1233,7 @@ static void repl(void)
 
 /* ----------------------------------------------------------------------- */
 
+/* Initialize subsystems, run REPL, and perform cleanup. */
 int main(void)
 {
   int ch;
