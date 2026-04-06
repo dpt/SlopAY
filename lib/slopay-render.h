@@ -15,12 +15,12 @@
 /**
  * Callback signature for audio frame rendering.
  *
- * \param[in] userdata Caller-provided context.
- * \param[out] output Buffer to fill with interleaved float32 samples (-1.0 to +1.0).
- * \param[in] frames Number of sample frames to render (mono or stereo).
+ * \param[in]  userdata Caller-provided context.
+ * \param[out] output   Buffer to fill with interleaved float32 samples (-1.0 to +1.0).
+ * \param[in]  frames   Number of sample frames to render (mono or stereo).
  */
-typedef void (*slopay_render_fn)(void *userdata,
-                                 float *output,
+typedef void (*slopay_render_fn)(void     *userdata,
+                                 float    *output,
                                  uint32_t frames);
 
 #endif /* SLOPAY_RENDER_H */

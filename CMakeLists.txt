@@ -16,8 +16,8 @@ add_executable(SlopAY
   slop-ay/slopay-loader.c
   slop-ay/slopay-target-midi.c
   slop-ay/slopay-target-wave.c
-  slop-ay/slopz80.c
   slop-ay/slopay.c
+  slop-ay/slopz80.c
 )
 
 target_include_directories(SlopAY PRIVATE
@@ -53,10 +53,11 @@ if(APPLE)
   add_executable(MIDIAY
     lib/slopay-chip.c
     lib/slopay-target-macos.c
+    midi-ay/chords.c
+    midi-ay/effects/echo.c
+    midi-ay/effects/reverb.c
     midi-ay/midiay.c
     midi-ay/polyblep.c
-    midi-ay/reverb.c
-    midi-ay/echo.c
   )
 
   target_include_directories(MIDIAY PRIVATE
