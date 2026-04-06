@@ -295,15 +295,14 @@ static void ay_fixup_tone(aytone_t *l, const aytone_t *r)
 
 slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
 {
-  int      total_clocks_fxp;
-  int      whole_clocks;
-  int      t;
-  int      ch;
-  uint8_t  mixer_reg;
-  int      mixed[AY_CHANNELS];
-  unsigned channel_active;
-  int      output_l, output_r; /* these hold multiple channels */
-  int      final_l, final_r;
+  int     total_clocks_fxp;
+  int     whole_clocks;
+  int     t;
+  int     ch;
+  uint8_t mixer_reg;
+  int     mixed[AY_CHANNELS];
+  int     output_l, output_r; /* these hold multiple channels */
+  int     final_l, final_r;
 
   total_clocks_fxp = ay->clocks_per_sample + ay->clock_error;
   whole_clocks = total_clocks_fxp >> (AY_FXP + 4); /* + 4 is the 16 divider */
@@ -333,7 +332,6 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
 
   mixer_reg = ay->regs[AY_REG_MIXER];
 
-  channel_active = 0;
   for (ch = 0; ch < AY_CHANNELS; ch++) {
     /*
      * AY mixer bits are active-low masks. A disabled tone/noise source does
@@ -361,61 +359,28 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
       amplitude = ay->env.volume * 32767 / AY_ENV_MAX_VOL;
 
     mixed[ch] = (output > 0) ? amplitude : -amplitude;
-    if (amplitude)
-      channel_active |= 1 << ch;
   }
 
   if (ay->mixer.stereo_mode != SLOPAY_CHIP_STEREO_MODE_MONO) {
-    int left_sum    = 0;
-    int right_sum   = 0;
-    int left_count  = 0;
-    int right_count = 0;
+    int left_sum;
+    int right_sum;
 
     /* Right channel is always B + C in both stereo modes. */
-    if (channel_active & 2) {
-      right_sum += mixed[1];
-      right_count++;
-    }
-    if (channel_active & 4) {
-      right_sum += mixed[2];
-      right_count++;
-    }
+    right_sum = mixed[1] + mixed[2];
 
     if (ay->mixer.stereo_mode == SLOPAY_CHIP_STEREO_MODE_ACB) {
       /* ACB: left = A + C */
-      if (channel_active & 1) {
-        left_sum += mixed[0];
-        left_count++;
-      }
-      if (channel_active & 4) {
-        left_sum += mixed[2];
-        left_count++;
-      }
+      left_sum = mixed[0] + mixed[2];
     } else {
       /* ABC: left = A + B */
-      if (channel_active & 1) {
-        left_sum += mixed[0];
-        left_count++;
-      }
-      if (channel_active & 2) {
-        left_sum += mixed[1];
-        left_count++;
-      }
+      left_sum = mixed[0] + mixed[1];
     }
 
-    output_l = (left_count  > 0) ? (left_sum  / left_count)  : 0;
-    output_r = (right_count > 0) ? (right_sum / right_count) : 0;
+    output_l = left_sum / 2;
+    output_r = right_sum / 2;
   } else {
-    int mono_sum   = 0;
-    int mono_count = 0;
-
-    for (ch = 0; ch < AY_CHANNELS; ch++)
-      if (channel_active & (1u << ch)) {
-        mono_sum += mixed[ch];
-        mono_count++;
-      }
-
-    output_l = output_r = (mono_count > 0) ? (mono_sum / mono_count) : 0;
+    const int mono_sum = mixed[0] + mixed[1] + mixed[2];
+    output_l = output_r = mono_sum / 3;
   }
 
   /* Apply master volume */
