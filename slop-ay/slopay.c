@@ -33,6 +33,7 @@
 #define Z80_CYCLE_FXP (8) /* Fixed-point precision for Z80 cycle calculations */
 #define SLOPAY_BEEPER_ADD_AY_GAIN (0.90f) /* Beeper gain when mixed additively with AY output */
 #define SLOPAY_BEEPER_DUCK_AY_GAIN (0.60f) /* Beeper gain when ducking AY output */
+#define SLOPAY_BEEPER_DC_BLOCK_R (0.995f) /* One-pole high-pass feedback for beeper DC removal */
 #define SLOPAY_MIDI_AY_CHANNELS 3 /* MIDI channels 0-2 correspond to AY channels A-C */
 #define SLOPAY_MIDI_BEEPER_VOICE_INDEX 3 /* MIDI channel index for beeper (if enabled) */
 #define SLOPAY_MIDI_CHANNELS 4 /* MIDI channels 0-2 for AY, 3 for beeper (if enabled) */
@@ -81,6 +82,8 @@ typedef struct {
   unsigned                  other_out_count;
   int                       beeper_level;
   float                     beeper_gain;
+  float                     beeper_dc_prev_in;
+  float                     beeper_dc_prev_out;
   slopay_beeper_mix_mode_t  beeper_mix_mode;
   int                       piano_roll_enabled;
   int                       midi_export_enabled;
@@ -110,6 +113,14 @@ static float slopay_clamp_unit(float v)
   if (v < -1.0f)
     return -1.0f;
   return v;
+}
+
+static float slopay_dc_block(float input, float *prev_in, float *prev_out)
+{
+  const float out = (input - *prev_in) + (SLOPAY_BEEPER_DC_BLOCK_R * *prev_out);
+  *prev_in = input;
+  *prev_out = out;
+  return out;
 }
 
 static volatile sig_atomic_t slopay_stop_requested = 0;
@@ -648,7 +659,10 @@ static void render_audio(void *userdata, float *output, uint32_t frames)
 
     /* Mix in ZX beeper level (captured from EAR bit on even-port OUT). */
     {
-      const float beeper = io->beeper_level ? io->beeper_gain : 0.0f;
+      const float beeper_raw = io->beeper_level ? io->beeper_gain : 0.0f;
+      const float beeper = slopay_dc_block(beeper_raw,
+                                           &io->beeper_dc_prev_in,
+                                           &io->beeper_dc_prev_out);
       const float ay_gain = (io->beeper_mix_mode == SLOPAY_BEEPER_MIX_DUCK && io->beeper_level)
                             ? SLOPAY_BEEPER_DUCK_AY_GAIN
                             : SLOPAY_BEEPER_ADD_AY_GAIN;
