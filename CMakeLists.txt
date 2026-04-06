@@ -53,6 +53,7 @@ if(APPLE)
   add_executable(MIDIAY
     lib/slopay-chip.c
     lib/slopay-target-macos.c
+    midi-ay/arpeggiator.c
     midi-ay/chords.c
     midi-ay/effects/echo.c
     midi-ay/effects/reverb.c

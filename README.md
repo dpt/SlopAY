@@ -155,11 +155,14 @@ Controls:
 - `Z` / `X`: octave down / up
 - `C`: toggle three-note chord mode on/off
 - `M`: cycle chord type (`maj` / `min` / `sus4` / `sus2` / `dim` / `aug` / `5`)
+- `V`: toggle arpeggiator on/off
+- `K` / `L`: slower / faster arpeggiator step speed
 - `[` / `]`: shorten / lengthen note hold time (50 ms steps, range 50–2000 ms, default 200 ms)
 - `Space`: stop all current notes immediately
 - `Q`: return to command mode
 
 Chord mode/type are global and shared across command mode, play mode, and MIDI input.
+Arpeggiator mode/speed are also shared with MIDI input.
 
 Links
 -----

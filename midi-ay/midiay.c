@@ -20,6 +20,7 @@
 
 #include "slopay-chip.h"
 #include "slopay-target-macos.h"
+#include "arpeggiator.h"
 #include "chords.h"
 #include "polyblep.h"
 #include "effects/reverb.h"
@@ -62,6 +63,11 @@
 #define PLAY_MODE_NOTE_MS_MIN       (50)
 #define PLAY_MODE_NOTE_MS_MAX     (2000)
 #define PLAY_MODE_NOTE_MS_STEP      (50)
+#define PLAY_MODE_ARP_STEP_MS_DEFAULT (60)
+#define PLAY_MODE_ARP_STEP_MS_MIN     (20)
+#define PLAY_MODE_ARP_STEP_MS_MAX    (400)
+#define PLAY_MODE_ARP_STEP_MS_STEP    (20)
+#define PLAY_MODE_ARP_SLICE_MS        (20)
 #define PLAY_MODE_DEFAULT_OCT        (4)
 #define PLAY_MODE_MIN_OCT            (0)
 #define PLAY_MODE_MAX_OCT            (8)
@@ -91,9 +97,15 @@ typedef struct {
   size_t                reverb_delay;
   size_t                echo_delay;
   int                   chord_enabled;
-  chord_t chord_type;
+  chord_t               chord_type;
+  int                   arp_enabled;
+  int                   arp_step_ms;
+  arpeggiator_t         midi_arp;
+  int                   midi_arp_samples_until_step;
+  int                   midi_arp_current_note;
   uint8_t               channel_volume_level[MAX_POLYPHONY];
   int                   channel_envelope_enabled[MAX_POLYPHONY];
+  uint8_t               midi_note_held[MIDI_NOTE_COUNT];
   int                   midi_chord_active[MIDI_NOTE_COUNT];
   int                   midi_chord_notes[MIDI_NOTE_COUNT][CHORD_MAX_NOTES];
 } midiay_state_t;
@@ -104,6 +116,10 @@ static midiay_state_t g_state = {
   .echo_delay   = 0,
   .chord_enabled = 0,
   .chord_type    = CHORD_TYPE_MAJOR,
+  .arp_enabled   = 0,
+  .arp_step_ms   = PLAY_MODE_ARP_STEP_MS_DEFAULT,
+  .midi_arp_samples_until_step = 1,
+  .midi_arp_current_note = -1,
   .channel_volume_level = { 15, 15, 15 },
   .channel_envelope_enabled = { 0, 0, 0 }
 };
@@ -308,6 +324,9 @@ static int read_single_key(int *key)
 }
 
 static void repl_print_help_table(void);
+static void key_hold(int note);
+static void key_release(int note);
+static void key_release_all(void);
 
 static void apply_channel_volume_register(const int ch)
 {
@@ -330,6 +349,109 @@ static void set_channel_envelope_enabled(const int ch, const int enabled)
          (char)('A' + ch));
 }
 
+static int midi_arp_step_samples(void)
+{
+  int step_samples = (SAMPLE_RATE * g_state.arp_step_ms) / 1000;
+  if (step_samples <= 0)
+    step_samples = 1;
+  return step_samples;
+}
+
+static void midi_arp_release_current_note(void)
+{
+  if (g_state.midi_arp_current_note >= 0) {
+    key_release(g_state.midi_arp_current_note);
+    g_state.midi_arp_current_note = -1;
+  }
+}
+
+static void midi_arp_refresh_notes(void)
+{
+  int notes[ARPEGGIATOR_MAX_NOTES];
+  int count = 0;
+
+  for (int root = 0; root < MIDI_NOTE_COUNT; root++) {
+    if (!g_state.midi_note_held[root])
+      continue;
+
+    if (g_state.midi_chord_active[root]) {
+      for (int i = 0; i < CHORD_MAX_NOTES && count < ARPEGGIATOR_MAX_NOTES; i++) {
+        const int note = g_state.midi_chord_notes[root][i];
+        int duplicate = 0;
+
+        for (int j = 0; j < count; j++)
+          if (notes[j] == note) {
+            duplicate = 1;
+            break;
+          }
+
+        if (!duplicate)
+          notes[count++] = note;
+      }
+    } else if (count < ARPEGGIATOR_MAX_NOTES) {
+      int duplicate = 0;
+
+      for (int j = 0; j < count; j++)
+        if (notes[j] == root) {
+          duplicate = 1;
+          break;
+        }
+
+      if (!duplicate)
+        notes[count++] = root;
+    }
+  }
+
+  arpeggiator_set_notes(&g_state.midi_arp, notes, (size_t)count);
+}
+
+static void midi_arp_tick_once(void)
+{
+  int next_note;
+
+  if (!g_state.arp_enabled || g_state.midi_arp.note_count <= 0) {
+    midi_arp_release_current_note();
+    return;
+  }
+
+  next_note = arpeggiator_tick(&g_state.midi_arp, g_state.midi_arp.notes[0]);
+  if (next_note == g_state.midi_arp_current_note)
+    return;
+
+  midi_arp_release_current_note();
+  key_hold(next_note);
+  g_state.midi_arp_current_note = next_note;
+}
+
+static void midi_arp_sync_enabled_state(void)
+{
+  arpeggiator_set_enabled(&g_state.midi_arp, g_state.arp_enabled);
+  arpeggiator_set_step_frames(&g_state.midi_arp, 1);
+  g_state.midi_arp_samples_until_step = midi_arp_step_samples();
+
+  if (!g_state.arp_enabled) {
+    midi_arp_release_current_note();
+    for (int root = 0; root < MIDI_NOTE_COUNT; root++) {
+      if (!g_state.midi_note_held[root])
+        continue;
+
+      if (g_state.midi_chord_active[root]) {
+        for (int i = 0; i < CHORD_MAX_NOTES; i++)
+          key_hold(g_state.midi_chord_notes[root][i]);
+      } else
+        key_hold(root);
+    }
+    return;
+  }
+
+  for (int ch = 0; ch < MAX_POLYPHONY; ch++) {
+    if (g_state.channel_to_note[ch] != 0)
+      key_release(g_state.channel_to_note[ch]);
+  }
+  midi_arp_refresh_notes();
+  midi_arp_tick_once();
+}
+
 /* ----------------------------------------------------------------------- */
 
 static void render_audio(void *userdata, float *output, uint32_t frames)
@@ -342,6 +464,14 @@ static void render_audio(void *userdata, float *output, uint32_t frames)
   (void)userdata;
 
   for (uint32_t i = 0; i < frames; i++) {
+    if (g_state.arp_enabled) {
+      g_state.midi_arp_samples_until_step--;
+      if (g_state.midi_arp_samples_until_step <= 0) {
+        midi_arp_tick_once();
+        g_state.midi_arp_samples_until_step += midi_arp_step_samples();
+      }
+    }
+
     if (g_state.output_polyblep) {
       o1 = polyblep_sample(&g_state.oscs[0]);
       o2 = polyblep_sample(&g_state.oscs[1]);
@@ -447,6 +577,13 @@ static void key_release_all(void)
 
   for (int note = 0; note < MIDI_NOTE_COUNT; note++)
     g_state.midi_chord_active[note] = 0;
+
+  for (int note = 0; note < MIDI_NOTE_COUNT; note++)
+    g_state.midi_note_held[note] = 0;
+
+  arpeggiator_set_notes(&g_state.midi_arp, NULL, 0);
+  g_state.midi_arp_current_note = -1;
+  g_state.midi_arp_samples_until_step = midi_arp_step_samples();
 }
 
 static void setchannelvol(float midi_volume)
@@ -544,12 +681,20 @@ static void disableecho(void)
 static void togglechordmode(void)
 {
   g_state.chord_enabled = !g_state.chord_enabled;
+  if (g_state.arp_enabled) {
+    midi_arp_refresh_notes();
+    midi_arp_tick_once();
+  }
 }
 
 static void cyclechordtype(void)
 {
   g_state.chord_type = (chord_t)((g_state.chord_type + 1) % CHORD_TYPE__LIMIT);
   printf("MIDI chord type: %s\n", chord_name(g_state.chord_type));
+  if (g_state.arp_enabled) {
+    midi_arp_refresh_notes();
+    midi_arp_tick_once();
+  }
 }
 
 /* ----------------------------------------------------------------------- */
@@ -560,19 +705,35 @@ static void midi_note_on(int note)
   if (note < 0 || note >= MIDI_NOTE_COUNT)
     return;
 
+  g_state.midi_note_held[note] = 1;
+
   if (!g_state.chord_enabled) {
-    key_hold(note);
+    g_state.midi_chord_active[note] = 0;
+    if (!g_state.arp_enabled)
+      key_hold(note);
+    else {
+      midi_arp_refresh_notes();
+      midi_arp_tick_once();
+      g_state.midi_arp_samples_until_step = midi_arp_step_samples();
+    }
     return;
   }
 
   if (g_state.midi_chord_active[note]) {
-    for (int i = 0; i < CHORD_MAX_NOTES; i++)
-      key_release(g_state.midi_chord_notes[note][i]);
+    if (!g_state.arp_enabled)
+      for (int i = 0; i < CHORD_MAX_NOTES; i++)
+        key_release(g_state.midi_chord_notes[note][i]);
   }
 
   chord_build(note, g_state.chord_type, g_state.midi_chord_notes[note]);
-  for (int i = 0; i < CHORD_MAX_NOTES; i++)
-    key_hold(g_state.midi_chord_notes[note][i]);
+  if (!g_state.arp_enabled)
+    for (int i = 0; i < CHORD_MAX_NOTES; i++)
+      key_hold(g_state.midi_chord_notes[note][i]);
+  else {
+    midi_arp_refresh_notes();
+    midi_arp_tick_once();
+    g_state.midi_arp_samples_until_step = midi_arp_step_samples();
+  }
 
   g_state.midi_chord_active[note] = 1;
 }
@@ -581,6 +742,16 @@ static void midi_note_off(int note)
 {
   if (note < 0 || note >= MIDI_NOTE_COUNT)
     return;
+
+  g_state.midi_note_held[note] = 0;
+
+  if (g_state.arp_enabled) {
+    g_state.midi_chord_active[note] = 0;
+    midi_arp_refresh_notes();
+    midi_arp_tick_once();
+    g_state.midi_arp_samples_until_step = midi_arp_step_samples();
+    return;
+  }
 
   if (g_state.midi_chord_active[note]) {
     for (int i = CHORD_MAX_NOTES - 1; i >= 0; i--)
@@ -702,11 +873,19 @@ static void teardownMIDI(void)
   }
 }
 
-static void play_mode_print_status(int play_octave, int note_ms, int chord_enabled, chord_t chord_type)
+static void play_mode_print_status(int play_octave,
+                                   int note_ms,
+                                   int chord_enabled,
+                                   chord_t chord_type,
+                                   int arp_enabled,
+                                   int arp_step_ms)
 {
   printf("\rOctave: %d  Hold: %dms  Chord: %s", play_octave, note_ms, chord_enabled ? "on" : "off");
   if (chord_enabled)
     printf(" (%s)", chord_name(chord_type));
+  printf("  Arp: %s", arp_enabled ? "on" : "off");
+  if (arp_enabled)
+    printf(" (%dms)", arp_step_ms);
   printf("\n");
 }
 
@@ -726,10 +905,21 @@ static void run_play_mode(void)
   struct termios saved;
   int            play_octave   = PLAY_MODE_DEFAULT_OCT;
   int            note_ms       = PLAY_MODE_NOTE_MS_DEFAULT;
+  arpeggiator_t  arp;
+
+  arpeggiator_init(&arp);
+  arpeggiator_set_step_frames(&arp, g_state.arp_step_ms / PLAY_MODE_ARP_SLICE_MS);
+  arpeggiator_set_enabled(&arp, g_state.arp_enabled);
 
   printf("Play mode: A S D F G H J = C D E F G A B, W E T Y U = sharps\n");
-  printf("           Z/X = octave down/up, [/] = shorter/longer hold, C = toggle 3-note chords, M = cycle chord type, Space = stop all, Q = return\n");
-  play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type);
+  printf("           Z/X = octave down/up, [/] = shorter/longer hold, C = toggle 3-note chords, M = cycle chord type\n");
+  printf("           V = toggle arpeggiator, K/L = slower/faster arp, Space = stop all, Q = return\n");
+  play_mode_print_status(play_octave,
+                         note_ms,
+                         g_state.chord_enabled,
+                         g_state.chord_type,
+                         g_state.arp_enabled,
+                         g_state.arp_step_ms);
 
   if (terminal_enable_raw_mode(&saved) != 0) {
     printf("Failed to enter raw input mode\n");
@@ -757,29 +947,55 @@ static void run_play_mode(void)
     case 'Z':
       if (play_octave > PLAY_MODE_MIN_OCT) {
         play_octave--;
-        play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type);
+        play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type, g_state.arp_enabled, g_state.arp_step_ms);
       }
       continue;
     case 'X':
       if (play_octave < PLAY_MODE_MAX_OCT) {
         play_octave++;
-        play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type);
+        play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type, g_state.arp_enabled, g_state.arp_step_ms);
       }
       continue;
     case 'C':
       g_state.chord_enabled = !g_state.chord_enabled;
-      play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type);
+      play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type, g_state.arp_enabled, g_state.arp_step_ms);
       continue;
     case 'M':
       g_state.chord_type = (chord_t)((g_state.chord_type + 1) % CHORD_TYPE__LIMIT);
-      play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type);
+      play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type, g_state.arp_enabled, g_state.arp_step_ms);
+      continue;
+    case 'V':
+      g_state.arp_enabled = !g_state.arp_enabled;
+      arpeggiator_set_enabled(&arp, g_state.arp_enabled);
+      midi_arp_sync_enabled_state();
+      play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type, g_state.arp_enabled, g_state.arp_step_ms);
+      continue;
+    case 'K':
+      if (g_state.arp_step_ms < PLAY_MODE_ARP_STEP_MS_MAX) {
+        g_state.arp_step_ms += PLAY_MODE_ARP_STEP_MS_STEP;
+        if (g_state.arp_step_ms > PLAY_MODE_ARP_STEP_MS_MAX)
+          g_state.arp_step_ms = PLAY_MODE_ARP_STEP_MS_MAX;
+        arpeggiator_set_step_frames(&arp, g_state.arp_step_ms / PLAY_MODE_ARP_SLICE_MS);
+        midi_arp_sync_enabled_state();
+        play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type, g_state.arp_enabled, g_state.arp_step_ms);
+      }
+      continue;
+    case 'L':
+      if (g_state.arp_step_ms > PLAY_MODE_ARP_STEP_MS_MIN) {
+        g_state.arp_step_ms -= PLAY_MODE_ARP_STEP_MS_STEP;
+        if (g_state.arp_step_ms < PLAY_MODE_ARP_STEP_MS_MIN)
+          g_state.arp_step_ms = PLAY_MODE_ARP_STEP_MS_MIN;
+        arpeggiator_set_step_frames(&arp, g_state.arp_step_ms / PLAY_MODE_ARP_SLICE_MS);
+        midi_arp_sync_enabled_state();
+        play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type, g_state.arp_enabled, g_state.arp_step_ms);
+      }
       continue;
     case '[':
       if (note_ms > PLAY_MODE_NOTE_MS_MIN) {
         note_ms -= PLAY_MODE_NOTE_MS_STEP;
         if (note_ms < PLAY_MODE_NOTE_MS_MIN)
           note_ms = PLAY_MODE_NOTE_MS_MIN;
-        play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type);
+        play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type, g_state.arp_enabled, g_state.arp_step_ms);
       }
       continue;
     case ']':
@@ -787,7 +1003,7 @@ static void run_play_mode(void)
         note_ms += PLAY_MODE_NOTE_MS_STEP;
         if (note_ms > PLAY_MODE_NOTE_MS_MAX)
           note_ms = PLAY_MODE_NOTE_MS_MAX;
-        play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type);
+        play_mode_print_status(play_octave, note_ms, g_state.chord_enabled, g_state.chord_type, g_state.arp_enabled, g_state.arp_step_ms);
       }
       continue;
     default:
@@ -800,21 +1016,49 @@ static void run_play_mode(void)
 
     note = (play_octave + 1) * 12 + semitone;
 
-    if (!g_state.chord_enabled) {
-      key_hold(note);
-      usleep((useconds_t)note_ms * 1000u);
-      key_release(note);
-    } else {
-      int chord_notes[CHORD_MAX_NOTES];
-      chord_build(note, g_state.chord_type, chord_notes);
+    {
+      int notes[CHORD_MAX_NOTES];
+      int note_count = 1;
 
-      for (int i = 0; i < CHORD_MAX_NOTES; i++)
-        key_hold(chord_notes[i]);
+      notes[0] = note;
+      if (g_state.chord_enabled) {
+        chord_build(note, g_state.chord_type, notes);
+        note_count = CHORD_MAX_NOTES;
+      }
 
-      usleep((useconds_t)note_ms * 1000u);
+      if (!g_state.arp_enabled) {
+        for (int i = 0; i < note_count; i++)
+          key_hold(notes[i]);
 
-      for (int i = CHORD_MAX_NOTES - 1; i >= 0; i--)
-        key_release(chord_notes[i]);
+        usleep((useconds_t)note_ms * 1000u);
+
+        for (int i = note_count - 1; i >= 0; i--)
+          key_release(notes[i]);
+      } else {
+        int active_note = -1;
+        int remaining_ms = note_ms;
+
+        arpeggiator_set_notes(&arp, notes, (size_t)note_count);
+        while (remaining_ms > 0) {
+          const int arp_note = arpeggiator_tick(&arp, notes[0]);
+          const int sleep_ms = (remaining_ms < PLAY_MODE_ARP_SLICE_MS)
+                               ? remaining_ms
+                               : PLAY_MODE_ARP_SLICE_MS;
+
+          if (arp_note != active_note) {
+            if (active_note >= 0)
+              key_release(active_note);
+            key_hold(arp_note);
+            active_note = arp_note;
+          }
+
+          usleep((useconds_t)sleep_ms * 1000u);
+          remaining_ms -= sleep_ms;
+        }
+
+        if (active_note >= 0)
+          key_release(active_note);
+      }
     }
   }
 
@@ -977,6 +1221,12 @@ int main(void)
   slopay_chip_set_stereo_mode(g_state.ay, SLOPAY_CHIP_STEREO_MODE_ABC); /* default stereo mode */
   slopay_chip_set_volume(g_state.ay, 10); /* 10% master volume */
   g_state.stereo_mode = SLOPAY_CHIP_STEREO_MODE_ABC;
+
+  arpeggiator_init(&g_state.midi_arp);
+  arpeggiator_set_step_frames(&g_state.midi_arp, 1);
+  arpeggiator_set_enabled(&g_state.midi_arp, g_state.arp_enabled);
+  g_state.midi_arp_samples_until_step = midi_arp_step_samples();
+  g_state.midi_arp_current_note = -1;
 
   for (ch = 0; ch < REVERB_CHANNELS; ch++) {
     g_state.rev[ch] = reverb_create(SAMPLE_RATE);
