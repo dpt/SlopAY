@@ -640,6 +640,40 @@ static int z80_exec_ed(z80_t *cpu)
     Z80_SET_F(cpu, f);
     return 9;
 
+  case 0x67: { /* RRD */
+    const uint8_t a_old = Z80_A(cpu);
+    const uint8_t m_old = Z80_MEM_RD(cpu, cpu->regs.hl);
+    const uint8_t a_new = (uint8_t)((a_old & 0xF0) | (m_old & 0x0F));
+    const uint8_t m_new = (uint8_t)(((a_old & 0x0F) << 4) | (m_old >> 4));
+
+    Z80_SET_A(cpu, a_new);
+    Z80_MEM_WR(cpu, cpu->regs.hl, m_new);
+
+    f = Z80_F(cpu) & FLAG_C;
+    if (a_new == 0) SET_FLAG(f, FLAG_Z);
+    if (a_new & 0x80) SET_FLAG(f, FLAG_S);
+    if (z80_parity(a_new)) SET_FLAG(f, FLAG_PV);
+    Z80_SET_F(cpu, f);
+    return 18;
+  }
+
+  case 0x6F: { /* RLD */
+    const uint8_t a_old = Z80_A(cpu);
+    const uint8_t m_old = Z80_MEM_RD(cpu, cpu->regs.hl);
+    const uint8_t a_new = (uint8_t)((a_old & 0xF0) | (m_old >> 4));
+    const uint8_t m_new = (uint8_t)((m_old << 4) | (a_old & 0x0F));
+
+    Z80_SET_A(cpu, a_new);
+    Z80_MEM_WR(cpu, cpu->regs.hl, m_new);
+
+    f = Z80_F(cpu) & FLAG_C;
+    if (a_new == 0) SET_FLAG(f, FLAG_Z);
+    if (a_new & 0x80) SET_FLAG(f, FLAG_S);
+    if (z80_parity(a_new)) SET_FLAG(f, FLAG_PV);
+    Z80_SET_F(cpu, f);
+    return 18;
+  }
+
   case 0x40: case 0x48: case 0x50: case 0x58:
   case 0x60: case 0x68: case 0x70: case 0x78: {
     /* IN r,(C) */
