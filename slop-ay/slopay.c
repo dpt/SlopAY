@@ -1051,10 +1051,9 @@ static void print_usage(const char *prog)
   printf("run headless unless writing WAV output.\n");
   printf("\n");
   printf("Options:\n");
-  printf("  -v, --volume <percent>          Master volume for AY + beeper (0-100, default 100)\n");
-  printf("  -b, --beeper-volume <percent>   Relative beeper level (0-100, default 50)\n");
+  printf("  -v, --volume <percent>          AY volume percent (0-100, default 100)\n");
+  printf("  -b, --beeper-volume <percent>   ZX beeper trim (0-100, default 50; scaled by -v)\n");
   printf("      --beeper <percent>          Alias for --beeper-volume\n");
-  printf("                                  Effective beeper level = (-v/100) * (-b/100)\n");
   printf("  -m, --beeper-mix <mode>         Beeper mix mode: add or duck (default add)\n");
   printf("      --mix <mode>                Alias for --beeper-mix\n");
   printf("  -x, --stereo-mode <mode>        Stereo mode: mono, abc or acb (default abc)\n");
