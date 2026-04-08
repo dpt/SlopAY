@@ -129,6 +129,9 @@ slopay_chip_t *slopay_chip_create(int clock_freq, int sample_rate)
   ay->mixer.master_volume = AY_MASTER_VOLUME_MAX;
   ay->mixer.stereo_mode   = SLOPAY_CHIP_STEREO_MODE_ABC;
 
+  for (int ch = 0; ch < AY_CHANNELS; ch++)
+    ay->tone[ch].phase = 1;
+
   return ay;
 }
 
@@ -324,7 +327,7 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
   int     final_l, final_r;
 
   total_clocks_fxp = ay->clocks_per_sample + ay->clock_error;
-  whole_clocks = total_clocks_fxp >> (AY_FXP + 4); /* + 4 is the 16 divider */
+  whole_clocks = total_clocks_fxp >> (AY_FXP + 4); /* +4 is the 16 divider */
   ay->clock_error = total_clocks_fxp - (whole_clocks << (AY_FXP + 4));
 
   /* All generators run unconditionally, matching real AY-3-8912 behaviour.

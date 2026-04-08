@@ -147,7 +147,7 @@ static const char *slopay_stereo_mode_name(slopay_stereo_mode_t mode)
 static const slopay_machine_profile_t *slopay_machine_profile(slopay_machine_t machine)
 {
   static const slopay_machine_profile_t slopay_machine_profiles[] = {
-    { "spectrum", 3494400, 1773450, 50 },
+    { "spectrum", 3546900, 1773450, 50 },
     { "cpc",      4000000, 1000000, 50 }
   };
 
