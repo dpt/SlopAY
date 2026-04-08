@@ -31,8 +31,8 @@ The project builds two executables:
 SlopAY [-V] [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-P <machine>] [-I <50|300>] [-r <Hz>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>
 ```
 
-- `-v, --volume <percent>`: AY volume (0-100, default 100)
-- `-b, --beeper-volume <percent>`, `--beeper <percent>`: beeper volume (0-100, default 22)
+- `-v, --volume <percent>`: master output volume for AY + beeper (0-100, default 100)
+- `-b, --beeper-volume <percent>`, `--beeper <percent>`: relative beeper level before master scaling (0-100, default 50)
 - `-m, --beeper-mix <mode>`, `--mix <mode>`: beeper mix mode (`add` or `duck`, default `add`)
 - `-x, --stereo-mode <mode>`: stereo mode (`mono`, `abc`, or `acb`, default `abc`)
 - `-P, --machine <machine>`: timing profile (`spectrum` or `cpc`, default `spectrum`)
@@ -46,6 +46,10 @@ SlopAY [-V] [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-P <machine>]
 - `-B, --midi-beeper-channel <0-15>`: MIDI channel used for beeper notes in `--midi` export (default `3`)
 - `-V, --version`: show program version
 - `-h, --help`: show command help
+
+Beeper effective level is `(-v / 100) * (-b / 100)`. For example, `-v 80 -b 50` yields an effective beeper level of `40%`.
+
+Both AY unipolar output and beeper output are DC-blocked in the render path to reduce DC bias in playback/export.
 
 Examples:
 

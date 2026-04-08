@@ -33,6 +33,7 @@
 #define Z80_CYCLE_FXP (8) /* Fixed-point precision for Z80 cycle calculations */
 #define SLOPAY_BEEPER_ADD_AY_GAIN (0.90f) /* Beeper gain when mixed additively with AY output */
 #define SLOPAY_BEEPER_DUCK_AY_GAIN (0.60f) /* Beeper gain when ducking AY output */
+#define SLOPAY_BEEPER_DC_BLOCK_R (0.995f) /* One-pole high-pass feedback for beeper DC removal */
 #define SLOPAY_MIDI_AY_CHANNELS 3 /* MIDI channels 0-2 correspond to AY channels A-C */
 #define SLOPAY_MIDI_BEEPER_VOICE_INDEX 3 /* MIDI channel index for beeper (if enabled) */
 #define SLOPAY_MIDI_CHANNELS 4 /* MIDI channels 0-2 for AY, 3 for beeper (if enabled) */
@@ -81,6 +82,8 @@ typedef struct {
   unsigned                  other_out_count;
   int                       beeper_level;
   float                     beeper_gain;
+  float                     beeper_dc_prev_in;
+  float                     beeper_dc_prev_out;
   slopay_beeper_mix_mode_t  beeper_mix_mode;
   int                       piano_roll_enabled;
   int                       midi_export_enabled;
@@ -110,6 +113,14 @@ static float slopay_clamp_unit(float v)
   if (v < -1.0f)
     return -1.0f;
   return v;
+}
+
+static float slopay_dc_block(float input, float *prev_in, float *prev_out)
+{
+  const float out = (input - *prev_in) + (SLOPAY_BEEPER_DC_BLOCK_R * *prev_out);
+  *prev_in = input;
+  *prev_out = out;
+  return out;
 }
 
 static volatile sig_atomic_t slopay_stop_requested = 0;
@@ -648,7 +659,10 @@ static void render_audio(void *userdata, float *output, uint32_t frames)
 
     /* Mix in ZX beeper level (captured from EAR bit on even-port OUT). */
     {
-      const float beeper = io->beeper_level ? io->beeper_gain : 0.0f;
+      const float beeper_raw = io->beeper_level ? io->beeper_gain : 0.0f;
+      const float beeper = slopay_dc_block(beeper_raw,
+                                           &io->beeper_dc_prev_in,
+                                           &io->beeper_dc_prev_out);
       const float ay_gain = (io->beeper_mix_mode == SLOPAY_BEEPER_MIX_DUCK && io->beeper_level)
                             ? SLOPAY_BEEPER_DUCK_AY_GAIN
                             : SLOPAY_BEEPER_ADD_AY_GAIN;
@@ -905,7 +919,9 @@ static void slopay_run_z80(slopay_loader_file_t *file,
   io.samples_to_next_frame = io.samples_per_frame;
   io.z80_cycles_per_sample_fxp = (profile->z80_clock_freq << Z80_CYCLE_FXP) / sample_rate;
   io.z80_cycle_error_fxp = 0;
-  io.beeper_gain = (float)beeper_volume_percent / 100.0f;
+  /* Global volume (-v) scales both AY and beeper; -b remains relative beeper trim. */
+  io.beeper_gain = ((float)beeper_volume_percent / 100.0f) *
+                   ((float)volume_percent / 100.0f);
   io.beeper_mix_mode = beeper_mix_mode;
   io.piano_roll_enabled = piano_roll_enabled;
   io.midi_export_enabled = 0;
@@ -1036,7 +1052,7 @@ static void print_usage(const char *prog)
   printf("\n");
   printf("Options:\n");
   printf("  -v, --volume <percent>          AY volume percent (0-100, default 100)\n");
-  printf("  -b, --beeper-volume <percent>   ZX beeper volume percent (0-100, default 22)\n");
+  printf("  -b, --beeper-volume <percent>   ZX beeper trim (0-100, default 50; scaled by -v)\n");
   printf("      --beeper <percent>          Alias for --beeper-volume\n");
   printf("  -m, --beeper-mix <mode>         Beeper mix mode: add or duck (default add)\n");
   printf("      --mix <mode>                Alias for --beeper-mix\n");
@@ -1231,7 +1247,7 @@ int main(int argc, char *argv[])
   const char *midi_filename = NULL;
   int opt;
   int volume_percent = 100;
-  int beeper_volume_percent = 22;
+  int beeper_volume_percent = 50;
   int sample_rate = SLOPAY_DEFAULT_SAMPLE_RATE;
   slopay_beeper_mix_mode_t beeper_mix_mode = SLOPAY_BEEPER_MIX_ADD;
   slopay_stereo_mode_t stereo_mode = SLOPAY_STEREO_MODE_ABC;
@@ -1382,7 +1398,9 @@ int main(int argc, char *argv[])
   /* Load AY file */
   printf("Loading AY file: %s\n", ay_file_path);
   printf("AY volume: %d%%\n", volume_percent);
-  printf("Beeper volume: %d%%\n", beeper_volume_percent);
+  printf("Beeper volume: %d%% (scaled by AY volume to %.1f%% effective)\n",
+         beeper_volume_percent,
+         ((double)beeper_volume_percent * (double)volume_percent) / 100.0);
   printf("Beeper mix: %s\n", slopay_beeper_mix_mode_name(beeper_mix_mode));
   printf("Stereo mode: %s\n", slopay_stereo_mode_name(stereo_mode));
   printf("Machine profile: %s\n", slopay_machine_name(machine));

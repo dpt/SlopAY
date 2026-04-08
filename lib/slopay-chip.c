@@ -20,6 +20,7 @@
 /* AY configuration */
 #define AY_FXP                          (8) /* fixed point precision bits */
 #define AY_ENABLE_FIXUP                 (1) /* synchronise tone generators */
+#define AY_DC_BLOCK_R_Q15               (32604) /* 0.995 in Q15 */
 
 /* ----------------------------------------------------------------------- */
 
@@ -86,6 +87,11 @@ typedef struct {
 typedef struct {
   int                       master_volume; /* 0..AY_MASTER_VOLUME_MAX */
   slopay_chip_stereo_mode_t stereo_mode;
+
+  int32_t                   dc_prev_in_l;
+  int32_t                   dc_prev_in_r;
+  int32_t                   dc_prev_out_l_q15;
+  int32_t                   dc_prev_out_r_q15;
 } aymixer_t;
 
 /* AY state */
@@ -293,6 +299,19 @@ static void ay_fixup_tone(aytone_t *l, const aytone_t *r)
   }
 }
 
+static int ay_dc_block(int32_t *prev_in, int32_t *prev_out_q15, int input)
+{
+  const int32_t x      = (int32_t)input;
+  const int32_t delta  = x - *prev_in;
+  const int64_t fb_q30 = (int64_t)AY_DC_BLOCK_R_Q15 * (int64_t)(*prev_out_q15);
+  const int32_t y_q15  = (delta << 15) + (int32_t)((fb_q30 + (1 << 14)) >> 15);
+
+  *prev_in      = x;
+  *prev_out_q15 = y_q15;
+
+  return (int)(y_q15 >> 15);
+}
+
 slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
 {
   int     total_clocks_fxp;
@@ -358,7 +377,7 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
       /* Apply envelope-generated volume */
       amplitude = ay->env.volume * 32767 / AY_ENV_MAX_VOL;
 
-    mixed[ch] = (output > 0) ? amplitude : -amplitude;
+    mixed[ch] = (output > 0) ? amplitude : 0;
   }
 
   if (ay->mixer.stereo_mode != SLOPAY_CHIP_STEREO_MODE_MONO) {
@@ -382,6 +401,10 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
     const int mono_sum = mixed[0] + mixed[1] + mixed[2];
     output_l = output_r = mono_sum / 3;
   }
+
+  /* Unipolar channel summing introduces DC; remove it before volume/clamp. */
+  output_l = ay_dc_block(&ay->mixer.dc_prev_in_l, &ay->mixer.dc_prev_out_l_q15, output_l);
+  output_r = ay_dc_block(&ay->mixer.dc_prev_in_r, &ay->mixer.dc_prev_out_r_q15, output_r);
 
   /* Apply master volume */
   output_l = (output_l * ay->mixer.master_volume) / AY_MASTER_VOLUME_MAX;
