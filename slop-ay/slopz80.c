@@ -86,6 +86,8 @@ typedef int (*z80_opcode_handler)(z80_t *cpu);
 #define FLAG_H  Z80_FLAG_H
 #define FLAG_Z  Z80_FLAG_Z
 #define FLAG_S  Z80_FLAG_S
+#define FLAG_3  0x08
+#define FLAG_5  0x20
 
 /* Read 16-bit value from memory (little-endian) */
 static uint16_t read_nn(z80_t *cpu)
@@ -649,7 +651,7 @@ static int z80_exec_ed(z80_t *cpu)
     Z80_SET_A(cpu, a_new);
     Z80_MEM_WR(cpu, cpu->regs.hl, m_new);
 
-    f = Z80_F(cpu) & FLAG_C;
+    f = (uint8_t)((Z80_F(cpu) & FLAG_C) | (a_new & (FLAG_3 | FLAG_5)));
     if (a_new == 0) SET_FLAG(f, FLAG_Z);
     if (a_new & 0x80) SET_FLAG(f, FLAG_S);
     if (z80_parity(a_new)) SET_FLAG(f, FLAG_PV);
@@ -666,7 +668,7 @@ static int z80_exec_ed(z80_t *cpu)
     Z80_SET_A(cpu, a_new);
     Z80_MEM_WR(cpu, cpu->regs.hl, m_new);
 
-    f = Z80_F(cpu) & FLAG_C;
+    f = (uint8_t)((Z80_F(cpu) & FLAG_C) | (a_new & (FLAG_3 | FLAG_5)));
     if (a_new == 0) SET_FLAG(f, FLAG_Z);
     if (a_new & 0x80) SET_FLAG(f, FLAG_S);
     if (z80_parity(a_new)) SET_FLAG(f, FLAG_PV);
@@ -1149,6 +1151,52 @@ static int z80_exec_ddfd(z80_t *cpu, int use_iy)
   case 0xE9: cpu->regs.pc = *ireg; return 8;
   case 0xF9: cpu->regs.sp = *ireg; return 10;
 
+  /* Undocumented: LD r, IXH/IXL  (H→high byte, L→low byte of IX/IY) */
+  case 0x44: Z80_SET_B(cpu, (uint8_t)(*ireg >> 8)); return 8;
+  case 0x45: Z80_SET_B(cpu, (uint8_t)(*ireg & 0xFF)); return 8;
+  case 0x4C: Z80_SET_C(cpu, (uint8_t)(*ireg >> 8)); return 8;
+  case 0x4D: Z80_SET_C(cpu, (uint8_t)(*ireg & 0xFF)); return 8;
+  case 0x54: Z80_SET_D(cpu, (uint8_t)(*ireg >> 8)); return 8;
+  case 0x55: Z80_SET_D(cpu, (uint8_t)(*ireg & 0xFF)); return 8;
+  case 0x5C: Z80_SET_E(cpu, (uint8_t)(*ireg >> 8)); return 8;
+  case 0x5D: Z80_SET_E(cpu, (uint8_t)(*ireg & 0xFF)); return 8;
+  case 0x7C: Z80_SET_A(cpu, (uint8_t)(*ireg >> 8)); return 8;
+  case 0x7D: Z80_SET_A(cpu, (uint8_t)(*ireg & 0xFF)); return 8;
+
+  /* Undocumented: LD IXH/IXL, r */
+  case 0x60: *ireg = (*ireg & 0x00FF) | ((uint16_t)Z80_B(cpu) << 8); return 8;
+  case 0x61: *ireg = (*ireg & 0x00FF) | ((uint16_t)Z80_C(cpu) << 8); return 8;
+  case 0x62: *ireg = (*ireg & 0x00FF) | ((uint16_t)Z80_D(cpu) << 8); return 8;
+  case 0x63: *ireg = (*ireg & 0x00FF) | ((uint16_t)Z80_E(cpu) << 8); return 8;
+  case 0x64: /* LD IXH,IXH */ return 8;
+  case 0x65: *ireg = (*ireg & 0x00FF) | (uint16_t)((*ireg & 0xFF) << 8); return 8;
+  case 0x67: *ireg = (*ireg & 0x00FF) | ((uint16_t)Z80_A(cpu) << 8); return 8;
+  case 0x68: *ireg = (*ireg & 0xFF00) | Z80_B(cpu); return 8;
+  case 0x69: *ireg = (*ireg & 0xFF00) | Z80_C(cpu); return 8;
+  case 0x6A: *ireg = (*ireg & 0xFF00) | Z80_D(cpu); return 8;
+  case 0x6B: *ireg = (*ireg & 0xFF00) | Z80_E(cpu); return 8;
+  case 0x6C: *ireg = (*ireg & 0xFF00) | (uint8_t)(*ireg >> 8); return 8;
+  case 0x6D: /* LD IXL,IXL */ return 8;
+  case 0x6F: *ireg = (*ireg & 0xFF00) | Z80_A(cpu); return 8;
+
+  /* Undocumented: arithmetic with IXH/IXL */
+  case 0x84: return z80_op_add_a_r(cpu, (uint8_t)(*ireg >> 8));
+  case 0x85: return z80_op_add_a_r(cpu, (uint8_t)(*ireg & 0xFF));
+  case 0x8C: return z80_op_adc_a_r(cpu, (uint8_t)(*ireg >> 8));
+  case 0x8D: return z80_op_adc_a_r(cpu, (uint8_t)(*ireg & 0xFF));
+  case 0x94: return z80_op_sub_a_r(cpu, (uint8_t)(*ireg >> 8));
+  case 0x95: return z80_op_sub_a_r(cpu, (uint8_t)(*ireg & 0xFF));
+  case 0x9C: return z80_op_sbc_a_r(cpu, (uint8_t)(*ireg >> 8));
+  case 0x9D: return z80_op_sbc_a_r(cpu, (uint8_t)(*ireg & 0xFF));
+  case 0xA4: return z80_op_and_a_r(cpu, (uint8_t)(*ireg >> 8));
+  case 0xA5: return z80_op_and_a_r(cpu, (uint8_t)(*ireg & 0xFF));
+  case 0xAC: return z80_op_xor_a_r(cpu, (uint8_t)(*ireg >> 8));
+  case 0xAD: return z80_op_xor_a_r(cpu, (uint8_t)(*ireg & 0xFF));
+  case 0xB4: return z80_op_or_a_r(cpu, (uint8_t)(*ireg >> 8));
+  case 0xB5: return z80_op_or_a_r(cpu, (uint8_t)(*ireg & 0xFF));
+  case 0xBC: return z80_op_cp_a_r(cpu, (uint8_t)(*ireg >> 8));
+  case 0xBD: return z80_op_cp_a_r(cpu, (uint8_t)(*ireg & 0xFF));
+
   default:
     /* For documented behavior, many DD/FD opcodes map back to base decode.
        We conservatively treat unknown indexed forms as NOP for now. */
@@ -1219,7 +1267,32 @@ int slopz80_execute(slopz80_t *cpu, int max_cycles)
     case 0x24: cycles = z80_op_inc_r(cpu, &((uint8_t*)&cpu->regs.hl)[1]); break;
     case 0x25: cycles = z80_op_dec_r(cpu, &((uint8_t*)&cpu->regs.hl)[1]); break;
     case 0x26: cycles = z80_op_ld_r_n(cpu, &((uint8_t*)&cpu->regs.hl)[1]); break;
-    case 0x27: { uint8_t a = Z80_A(cpu); if (GET_FLAG(Z80_F(cpu), FLAG_N)) { if (GET_FLAG(Z80_F(cpu), FLAG_H)) a -= 6; if (GET_FLAG(Z80_F(cpu), FLAG_C)) a -= 0x60; } else { if ((a & 0x0F) > 9 || GET_FLAG(Z80_F(cpu), FLAG_H)) a += 6; if (a > 0x9F || GET_FLAG(Z80_F(cpu), FLAG_C)) a += 0x60; } Z80_SET_A(cpu, a); cycles = 4; } break;
+    case 0x27: {
+      const uint8_t a_in = Z80_A(cpu);
+      const uint8_t f_in = Z80_F(cpu);
+      const int c_in = GET_FLAG(f_in, FLAG_C);
+      const int h_in = GET_FLAG(f_in, FLAG_H);
+      const int n_in = GET_FLAG(f_in, FLAG_N);
+      uint8_t diff = 0;
+      int new_c = 0;
+      if (!n_in) {
+        if (c_in || a_in > 0x99)       { diff |= 0x60; new_c = 1; }
+        if (h_in || (a_in & 0x0F) > 9) { diff |= 0x06; }
+      } else {
+        if (c_in || a_in > 0x99)       { diff |= 0x60; new_c = 1; }
+        if (h_in || (a_in & 0x0F) > 9) { diff |= 0x06; }
+      }
+      const uint8_t a = n_in ? (uint8_t)(a_in - diff) : (uint8_t)(a_in + diff);
+      Z80_SET_A(cpu, a);
+      uint8_t nf = f_in & FLAG_N;       /* preserve N */
+      if (a == 0)        SET_FLAG(nf, FLAG_Z);
+      if (a & 0x80)      SET_FLAG(nf, FLAG_S);
+      if (z80_parity(a)) SET_FLAG(nf, FLAG_PV);
+      if (new_c)         SET_FLAG(nf, FLAG_C);
+      if ((a_in ^ a) & 0x10) SET_FLAG(nf, FLAG_H); /* nibble carry/borrow */
+      Z80_SET_F(cpu, nf);
+      cycles = 4;
+    } break;
     case 0x28: cycles = z80_op_jr_cond(cpu, GET_FLAG(Z80_F(cpu), FLAG_Z)); break;
     case 0x29: cycles = z80_op_add_hl_rr(cpu, cpu->regs.hl); break;
     case 0x2A: { uint16_t addr = read_nn(cpu); uint8_t low = Z80_MEM_RD(cpu, addr); uint8_t high = Z80_MEM_RD(cpu, addr + 1); cpu->regs.hl = (high << 8) | low; cycles = 16; } break;
@@ -1236,7 +1309,13 @@ int slopz80_execute(slopz80_t *cpu, int max_cycles)
     case 0x34: { uint8_t val = Z80_MEM_RD(cpu, cpu->regs.hl); z80_op_inc_r(cpu, &val); Z80_MEM_WR(cpu, cpu->regs.hl, val); cycles = 11; } break;
     case 0x35: { uint8_t val = Z80_MEM_RD(cpu, cpu->regs.hl); z80_op_dec_r(cpu, &val); Z80_MEM_WR(cpu, cpu->regs.hl, val); cycles = 11; } break;
     case 0x36: { uint8_t n = Z80_MEM_RD(cpu, cpu->regs.pc++); Z80_MEM_WR(cpu, cpu->regs.hl, n); cycles = 10; } break;
-    case 0x37: Z80_SET_F(cpu, Z80_F(cpu) | FLAG_C); cycles = 4; break;
+    case 0x37: {
+      uint8_t f = Z80_F(cpu) & (FLAG_S | FLAG_Z | FLAG_PV);
+      f |= (uint8_t)(Z80_A(cpu) & (FLAG_3 | FLAG_5));
+      f |= FLAG_C;
+      Z80_SET_F(cpu, f);
+      cycles = 4;
+    } break;
     case 0x38: cycles = z80_op_jr_cond(cpu, GET_FLAG(Z80_F(cpu), FLAG_C)); break;
     case 0x39: cycles = z80_op_add_hl_rr(cpu, cpu->regs.sp); break;
     case 0x3A: { uint16_t addr = read_nn(cpu); Z80_SET_A(cpu, Z80_MEM_RD(cpu, addr)); cycles = 13; } break;
@@ -1244,7 +1323,17 @@ int slopz80_execute(slopz80_t *cpu, int max_cycles)
     case 0x3C: cycles = z80_op_inc_r(cpu, &((uint8_t*)&cpu->regs.af)[1]); break;
     case 0x3D: cycles = z80_op_dec_r(cpu, &((uint8_t*)&cpu->regs.af)[1]); break;
     case 0x3E: cycles = z80_op_ld_r_n(cpu, &((uint8_t*)&cpu->regs.af)[1]); break;
-    case 0x3F: Z80_SET_F(cpu, Z80_F(cpu) & ~FLAG_C); cycles = 4; break;
+    case 0x3F: {
+      const uint8_t old_f = Z80_F(cpu);
+      uint8_t f = old_f & (FLAG_S | FLAG_Z | FLAG_PV);
+      f |= (uint8_t)(Z80_A(cpu) & (FLAG_3 | FLAG_5));
+      if (old_f & FLAG_C)
+        f |= FLAG_H;
+      else
+        f |= FLAG_C;
+      Z80_SET_F(cpu, f);
+      cycles = 4;
+    } break;
 
     /* 0x40-0x7F: LD r,r' and LD r,(HL) operations */
     case 0x40: Z80_SET_B(cpu, Z80_B(cpu)); cycles = 4; break;   /* LD B,B */
