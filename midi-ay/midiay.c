@@ -1252,6 +1252,9 @@ int main(void)
   }
 
   /* Set defaults */
+  g_state.mixerstate = 0;
+  slopay_chip_write_register(g_state.ay, AY_REG_MIXER, AY_MIXER_ALL_OFF);
+
   for (ch = 0; ch < AY_CHANNELS; ch++) {
     slopay_chip_write_register(g_state.ay, AY_REG_CHANNEL_A_VOLUME + ch, 15); /* Set channel volume (max) */
     polyblep_init(&g_state.oscs[ch], 440, SAMPLE_RATE);  /* 440Hz at 44.1kHz sample rate */
