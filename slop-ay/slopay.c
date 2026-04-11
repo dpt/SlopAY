@@ -27,6 +27,8 @@
 #include "slopay-target-wave.h"
 #include "slopay-target-midi.h"
 
+#define NELEMS(x) (sizeof(x) / sizeof((x)[0]))
+
 #define AY_BOOT_ADDR (0x0000) /* AY player code is expected to be loaded at this address */
 #define AY_ISR_ADDR (0x0038) /* AY player interrupt service routine is expected to be at this address */
 #define SLOPAY_DEFAULT_SAMPLE_RATE (44100) /* Standard CD-quality sample rate */
@@ -160,8 +162,6 @@ static const char *slopay_machine_name(slopay_machine_t machine)
 {
   return slopay_machine_profile(machine)->name;
 }
-
-#define NELEMS(x) (sizeof(x) / sizeof((x)[0]))
 
 static int slopay_parse_beeper_mix_mode(const char               *text,
                                         slopay_beeper_mix_mode_t *out_mode)

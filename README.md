@@ -25,6 +25,14 @@ The project builds two executables:
 - `SlopAY` (POSIX; real-time playback on macOS, headless elsewhere, WAV/MIDI export available)
 - `MIDIAY` (macOS only)
 
+Shared shortcut conventions:
+
+- `h`: help
+- `v`: volume
+- `x`: stereo mode
+- `r`: reverb
+- `e`: echo
+
 ### SlopAY syntax
 
 ```text
@@ -123,22 +131,22 @@ WAV/MIDI export.
 #### Command mode
 
 - `<reg> <value>`: write AY register directly (reg `0–15`, value `0–255`)
-- `p`: enter play mode (see below)
-- `h`: print the command help table
-- `c`: toggle chord mode (shared with play mode and MIDI input)
-- `m`: cycle chord type (`maj` → `min` → `sus4` → `sus2` → `dim` → `aug` → `5`)
-- `s`: cycle envelope shape
-- `o`: cycle envelope period
-- `v <0-100>`: set master volume percent
-- `g <0-127>`: set channel volume (MIDI scale)
-- `u <A|B|C|0|1|2> <0|1>`: disable/enable envelope control for one AY channel
-- `r`: cycle reverb delay
-- `r 0`: disable reverb
-- `e`: cycle echo delay
-- `e 0`: disable echo
-- `t`: cycle stereo mode (`mono` → `abc` → `acb`)
-- `.`: stop all notes
-- `q`: quit
+- `p`, `play`: enter play mode (see below)
+- `h`, `help`: print the command help table
+- `c`, `chord`: toggle chord mode (shared with play mode and MIDI input)
+- `m`, `chord-type`: cycle chord type (`maj` → `min` → `sus4` → `sus2` → `dim` → `aug` → `5`)
+- `s`, `envelope-shape`: cycle envelope shape
+- `o`, `envelope-period`: cycle envelope period
+- `v <0-100>`, `volume <0-100>`: set master volume percent
+- `g <0-127>`, `channel-volume <0-127>`: set channel volume (MIDI scale)
+- `u <A|B|C|0|1|2> <0|1>`, `envelope <A|B|C|0|1|2> <0|1>`: disable/enable envelope control for one AY channel
+- `r`, `reverb`: cycle reverb delay
+- `r 0`, `reverb 0`: disable reverb
+- `e`, `echo`: cycle echo delay
+- `e 0`, `echo 0`: disable echo
+- `x`, `stereo-mode`, `stereo`: cycle stereo mode (`mono` → `abc` → `acb`)
+- `.`, `stop`: stop all notes
+- `q`, `quit`: quit
 
 #### Play mode
 

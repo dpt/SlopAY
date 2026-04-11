@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <ctype.h>
 #include <math.h>
+#include <strings.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -75,6 +76,8 @@
 #define MIDI_NOTE_COUNT            (128)
 
 /* ----------------------------------------------------------------------- */
+
+#define NELEMS(x) (sizeof(x) / sizeof((x)[0]))
 
 #define DIV_NEAREST(a,b) (((a) + (b) / 2) / (b))
 
@@ -155,13 +158,28 @@ static int parse_register_write(const char *input, int *reg_out, int *val_out)
 /* Parse the channel volume command payload. */
 static int parse_channel_volume_command(const char *input, int *value_out)
 {
+  char cmd[32];
+  const char *p = input;
   char *endptr;
   long  value;
 
-  if (input[0] != 'G' && input[0] != 'g')
+  while (*p == ' ' || *p == '\t')
+    p++;
+
+  {
+    size_t i = 0;
+    while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n') {
+      if (i + 1 >= sizeof(cmd))
+        return 0;
+      cmd[i++] = *p++;
+    }
+    cmd[i] = '\0';
+  }
+
+  if (strcasecmp(cmd, "g") != 0 && strcasecmp(cmd, "channel-volume") != 0)
     return 0;
 
-  endptr = (char *)input + 1;
+  endptr = (char *)p;
   while (*endptr == ' ' || *endptr == '\t')
     endptr++;
 
@@ -181,14 +199,29 @@ static int parse_channel_volume_command(const char *input, int *value_out)
 /* Parse the master volume command payload. */
 static int parse_master_volume_command(const char *input, int *value_out)
 {
+  char cmd[32];
+  const char *p = input;
   char *endptr;
   char *value_start;
   long  value;
 
-  if (input[0] != 'V' && input[0] != 'v')
+  while (*p == ' ' || *p == '\t')
+    p++;
+
+  {
+    size_t i = 0;
+    while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n') {
+      if (i + 1 >= sizeof(cmd))
+        return 0;
+      cmd[i++] = *p++;
+    }
+    cmd[i] = '\0';
+  }
+
+  if (strcasecmp(cmd, "v") != 0 && strcasecmp(cmd, "volume") != 0)
     return 0;
 
-  endptr = (char *)input + 1;
+  endptr = (char *)p;
   while (*endptr == ' ' || *endptr == '\t')
     endptr++;
 
@@ -209,15 +242,29 @@ static int parse_master_volume_command(const char *input, int *value_out)
   return 1;
 }
 
-/* Parse an effect disable command of the form "<key> 0". */
-static int parse_effect_disable_command(const char *input, const char effect)
+/* Parse an effect disable command of the form "<key> 0" or "<name> 0". */
+static int parse_effect_disable_command(const char *input, const char effect, const char *name)
 {
-  const char *p;
+  char cmd[32];
+  const char *p = input;
 
-  if (input[0] != effect && input[0] != (char)(effect + ('a' - 'A')))
+  while (*p == ' ' || *p == '\t')
+    p++;
+
+  {
+    size_t i = 0;
+    while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n') {
+      if (i + 1 >= sizeof(cmd))
+        return 0;
+      cmd[i++] = *p++;
+    }
+    cmd[i] = '\0';
+  }
+
+  if (strcasecmp(cmd, (char[]){ (char)tolower((unsigned char)effect), '\0' }) != 0 &&
+      (name == NULL || strcasecmp(cmd, name) != 0))
     return 0;
 
-  p = input + 1;
   while (*p == ' ' || *p == '\t')
     p++;
 
@@ -234,15 +281,28 @@ static int parse_effect_disable_command(const char *input, const char effect)
 /* Parse per-channel envelope enable/disable input. */
 static int parse_envelope_channel_command(const char *input, int *channel_out, int *enabled_out)
 {
-  const char *p;
+  char        cmd[32];
+  const char *p = input;
   char       *endptr;
   long        enabled;
   int         channel;
 
-  if (input[0] != 'U' && input[0] != 'u')
+  while (*p == ' ' || *p == '\t')
+    p++;
+
+  {
+    size_t i = 0;
+    while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n') {
+      if (i + 1 >= sizeof(cmd))
+        return 0;
+      cmd[i++] = *p++;
+    }
+    cmd[i] = '\0';
+  }
+
+  if (strcasecmp(cmd, "u") != 0 && strcasecmp(cmd, "envelope") != 0)
     return 0;
 
-  p = input + 1;
   while (*p == ' ' || *p == '\t')
     p++;
 
@@ -1113,6 +1173,11 @@ typedef struct {
   int    is_quit;
 } repl_key_command_t;
 
+typedef struct {
+  const char *word;
+  int         key;
+} repl_word_alias_t;
+
 static const repl_key_command_t repl_key_commands[] = {
   { 'Q', NULL,             1 },
   { 'H', repl_print_help_table, 0 },
@@ -1123,34 +1188,61 @@ static const repl_key_command_t repl_key_commands[] = {
   { 'O', setenvperiod,     0 },
   { 'R', cyclereverbdelay, 0 },
   { 'E', cycleechodelay,   0 },
-  { 'T', cyclestereomode,  0 },
+  { 'X', cyclestereomode,  0 },
   { '.', key_release_all,  0 }
 };
+
+static const repl_word_alias_t repl_word_aliases[] = {
+  { "help",            'H' },
+  { "play",            'P' },
+  { "chord",           'C' },
+  { "chord-type",      'M' },
+  { "envelope-shape",  'S' },
+  { "envelope-period", 'O' },
+  { "reverb",          'R' },
+  { "echo",            'E' },
+  { "stereo",          'X' },
+  { "stereo-mode",     'X' },
+  { "stop",            '.' },
+  { "quit",            'Q' }
+};
+
+static int repl_lookup_command_key(const char *word)
+{
+  if (word == NULL || *word == '\0')
+    return 0;
+
+  for (size_t i = 0; i < NELEMS(repl_word_aliases); i++)
+    if (strcasecmp(word, repl_word_aliases[i].word) == 0)
+      return repl_word_aliases[i].key;
+
+  return 0;
+}
 
 /* ----------------------------------------------------------------------- */
 
 /* Print the command-mode help table. */
 static void repl_print_help_table(void)
 {
-  printf("+-------------+-------------------------------------+\n");
-  printf("| Command     | Action                              |\n");
-  printf("+-------------+-------------------------------------+\n");
-  printf("| <reg> <val> | Write AY register (e.g. 0 128)      |\n");
-  printf("| p           | Enter play mode                     |\n");
-  printf("| h           | Show this help table                |\n");
-  printf("| c           | Toggle chord mode                   |\n");
-  printf("| m           | Cycle chord type                    |\n");
-  printf("| u <ch> <0|1>| Envelope off/on for ch A-C or 0-2   |\n");
-  printf("| v <0-100>   | Set master volume percent           |\n");
-  printf("| g <0-127>   | Set channel volume from MIDI scale  |\n");
-  printf("| s           | Cycle envelope shape                |\n");
-  printf("| o           | Cycle envelope period               |\n");
-  printf("| r / r 0     | Cycle reverb delay / disable reverb |\n");
-  printf("| e / e 0     | Cycle echo delay / disable echo     |\n");
-  printf("| t           | Cycle stereo mode (mono/abc/acb)    |\n");
-  printf("| .           | Stop all notes                      |\n");
-  printf("| q           | Quit                                |\n");
-  printf("+-------------+-------------------------------------+\n");
+  printf("+---------------------------+---------------------------------+\n");
+  printf("| Command                   | Action                          |\n");
+  printf("+---------------------------+---------------------------------+\n");
+  printf("| <reg> <val>               | Write AY register (e.g. 0 128)  |\n");
+  printf("| p, play                   | Enter play mode                 |\n");
+  printf("| h, help                   | Show this help table            |\n");
+  printf("| c, chord                  | Toggle chord mode               |\n");
+  printf("| m, chord-type             | Cycle chord type                |\n");
+  printf("| u, envelope <ch> <0|1>    | Envelope off/on for A-C or 0-2  |\n");
+  printf("| v, volume <0-100>         | Set master volume percent       |\n");
+  printf("| g, channel-volume <0-127> | Set channel volume (MIDI scale) |\n");
+  printf("| s, envelope-shape         | Cycle envelope shape            |\n");
+  printf("| o, envelope-period        | Cycle envelope period           |\n");
+  printf("| r, reverb / reverb 0      | Cycle/disable reverb            |\n");
+  printf("| e, echo / echo 0          | Cycle/disable echo              |\n");
+  printf("| x, stereo / stereo-mode   | Cycle stereo (mono/abc/acb)     |\n");
+  printf("| ., stop                   | Stop all notes                  |\n");
+  printf("| q, quit                   | Quit                            |\n");
+  printf("+---------------------------+---------------------------------+\n");
   printf("Play mode and MIDI input share global chord settings.\n");
 }
 
@@ -1160,6 +1252,9 @@ static void repl_print_help_table(void)
 static void repl(void)
 {
   char input[100];
+  char command_word[32];
+  const char *scan;
+  size_t command_len;
   int  cmd;
   int  reg;
   int  val;
@@ -1178,9 +1273,29 @@ static void repl(void)
     if (!fgets(input, sizeof(input), stdin))
       break;
 
+    scan = input;
+    while (*scan == ' ' || *scan == '\t')
+      scan++;
+    command_len = 0;
+    while (scan[command_len] != '\0' && scan[command_len] != ' ' && scan[command_len] != '\t' &&
+           scan[command_len] != '\r' && scan[command_len] != '\n') {
+      if (command_len + 1 < sizeof(command_word))
+        command_word[command_len] = (char)tolower((unsigned char)scan[command_len]);
+      command_len++;
+    }
+    if (command_len >= sizeof(command_word))
+      command_len = sizeof(command_word) - 1;
+    command_word[command_len] = '\0';
+
     cmd = input[0];
     if (cmd >= 'a' && cmd <= 'z')
       cmd -= ('a' - 'A');
+
+    {
+      const int alias_key = repl_lookup_command_key(command_word);
+      if (alias_key != 0)
+        cmd = alias_key;
+    }
 
     if (!handled && parse_master_volume_command(input, &master_volume_value)) {
       slopay_chip_set_volume(g_state.ay, master_volume_value);
@@ -1204,18 +1319,18 @@ static void repl(void)
       handled = 1;
     }
 
-    if (!handled && parse_effect_disable_command(input, 'R')) {
+    if (!handled && parse_effect_disable_command(input, 'R', "reverb")) {
       disablereverb();
       handled = 1;
     }
 
-    if (!handled && parse_effect_disable_command(input, 'E')) {
+    if (!handled && parse_effect_disable_command(input, 'E', "echo")) {
       disableecho();
       handled = 1;
     }
 
     if (!handled)
-      for (size_t i = 0; i < (sizeof(repl_key_commands) / sizeof(repl_key_commands[0])); i++) {
+      for (size_t i = 0; i < NELEMS(repl_key_commands); i++) {
         if (cmd == repl_key_commands[i].key) {
           if (repl_key_commands[i].is_quit)
             return;
@@ -1227,7 +1342,7 @@ static void repl(void)
       }
 
     if (!handled)
-      printf("Invalid input. Use 'h' for help or 'q' to quit\n");
+      printf("Invalid input. Use 'h'/'help' for help or 'q'/'quit' to quit\n");
   }
 }
 
@@ -1238,8 +1353,8 @@ int main(void)
 {
   int ch;
 
-  printf("AY-3-8912 Emulator with CoreAudio\n");
-  printf("=================================\n");
+  printf("MIDIAY: AY-3-8912 Emulator\n");
+  printf("==========================\n");
 
   printf("Sample rate: %dHz\n", SAMPLE_RATE);
   printf("Clock speed: %.2fMHz\n", (double)CLOCK_FREQ / 1000000.0);
