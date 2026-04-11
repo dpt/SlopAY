@@ -18,29 +18,45 @@
 /* ----------------------------------------------------------------------- */
 
 /* AY configuration */
-#define AY_FXP                          (8) /* fixed point precision bits */
-#define AY_ENABLE_FIXUP                 (1) /* synchronise tone generators */
-#define AY_DC_BLOCK_R_Q15               (32604) /* 0.995 in Q15 */
+
+#define AY_FXP                  (8) /* fixed point precision bits */
+#define AY_ENABLE_FIXUP         (1) /* synchronise tone generators */
+#define AY_DC_BLOCK_R_Q15       (32604) /* 0.995 in Q15 */
 
 /* ----------------------------------------------------------------------- */
 
 /* Register masks */
-#define AY_REG_MASK_BYTE            (0xFFu)
-#define AY_REG_MASK_NIBBLE          AY_COARSE_PITCH_MAX
-#define AY_REG_MASK_MIXER           AY_MIXER_MASK
-#define AY_REG_MASK_VOLUME          AY_VOLUME_MAX
-#define AY_REG_MASK_ENVELOPE_SHAPE  AY_ENVELOPE_SHAPE_MAX
+
+#define AY_REG_MASK_BYTE        (0xFFu)
+#define AY_REG_MASK_NIBBLE      AY_COARSE_PITCH_MAX
+#define AY_REG_MASK_MIXER       AY_MIXER_MASK
+#define AY_REG_MASK_VOLUME      AY_VOLUME_MAX
+#define AY_REG_MASK_ENVELOPE_SHAPE AY_ENVELOPE_SHAPE_MAX
 
 /* Envelope limits */
-#define AY_ENV_MIN_VOL               (0x00)
-#define AY_ENV_MAX_VOL               AY_VOLUME_MAX
+
+#define AY_ENV_MIN_VOL          (0x00)
+#define AY_ENV_MAX_VOL          AY_VOLUME_MAX
 
 /* ----------------------------------------------------------------------- */
 
 /* Macros for common operations */
+
 #define AY_MIN(a,b) ((a) < (b) ? (a) : (b))
 #define AY_MAX(a,b) ((a) > (b) ? (a) : (b))
 #define AY_CLAMP(x,min,max) AY_MAX(min, AY_MIN(max, x))
+
+/* ----------------------------------------------------------------------- */
+
+/* Q15 fixed-point helpers */
+
+typedef int32_t ay_q15_t;
+
+#define AY_Q15_SHIFT            (15)
+#define AY_Q15_ONE              (1 << AY_Q15_SHIFT)
+#define AY_Q15_FROM_INT(v)      ((ay_q15_t)((v) << AY_Q15_SHIFT))
+#define AY_Q15_TO_INT(v)        ((int)((v) >> AY_Q15_SHIFT))
+#define AY_Q15_MUL(a,b)         ((ay_q15_t)((((int64_t)(a) * (int64_t)(b)) + (AY_Q15_ONE >> 1)) >> AY_Q15_SHIFT))
 
 /* ----------------------------------------------------------------------- */
 
@@ -62,7 +78,8 @@ typedef struct {
   int           phase;   /* output */
 } aywave_t;
 
-/* A tone generator */
+/* A tone generator
+ * This is just a wave generator. */
 typedef aywave_t aytone_t;
 
 /* A noise generator
@@ -87,11 +104,10 @@ typedef struct {
 typedef struct {
   int                       master_volume; /* 0..AY_MASTER_VOLUME_MAX */
   slopay_chip_stereo_mode_t stereo_mode;
-
-  int32_t                   dc_prev_in_l;
-  int32_t                   dc_prev_in_r;
-  int32_t                   dc_prev_out_l_q15;
-  int32_t                   dc_prev_out_r_q15;
+  ay_q15_t                  dc_prev_in_l_q15;
+  ay_q15_t                  dc_prev_in_r_q15;
+  ay_q15_t                  dc_prev_out_l_q15;
+  ay_q15_t                  dc_prev_out_r_q15;
 } aymixer_t;
 
 /* AY state */
@@ -302,17 +318,17 @@ static void ay_fixup_tone(aytone_t *l, const aytone_t *r)
   }
 }
 
-static int ay_dc_block(int32_t *prev_in, int32_t *prev_out_q15, int input)
+static int ay_dc_block(ay_q15_t *prev_in_q15, ay_q15_t *prev_out_q15, int input)
 {
-  const int32_t x      = (int32_t)input;
-  const int32_t delta  = x - *prev_in;
-  const int64_t fb_q30 = (int64_t)AY_DC_BLOCK_R_Q15 * (int64_t)(*prev_out_q15);
-  const int32_t y_q15  = (delta << 15) + (int32_t)((fb_q30 + (1 << 14)) >> 15);
+  const ay_q15_t x_q15     = AY_Q15_FROM_INT(input);
+  const ay_q15_t delta_q15 = x_q15 - *prev_in_q15;
+  const ay_q15_t fb_q15    = AY_Q15_MUL(AY_DC_BLOCK_R_Q15, *prev_out_q15);
+  const ay_q15_t y_q15     = delta_q15 + fb_q15;
 
-  *prev_in      = x;
+  *prev_in_q15  = x_q15;
   *prev_out_q15 = y_q15;
 
-  return (int)(y_q15 >> 15);
+  return AY_Q15_TO_INT(y_q15);
 }
 
 slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
@@ -406,8 +422,8 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
   }
 
   /* Unipolar channel summing introduces DC; remove it before volume/clamp. */
-  output_l = ay_dc_block(&ay->mixer.dc_prev_in_l, &ay->mixer.dc_prev_out_l_q15, output_l);
-  output_r = ay_dc_block(&ay->mixer.dc_prev_in_r, &ay->mixer.dc_prev_out_r_q15, output_r);
+  output_l = ay_dc_block(&ay->mixer.dc_prev_in_l_q15, &ay->mixer.dc_prev_out_l_q15, output_l);
+  output_r = ay_dc_block(&ay->mixer.dc_prev_in_r_q15, &ay->mixer.dc_prev_out_r_q15, output_r);
 
   /* Apply master volume */
   output_l = (output_l * ay->mixer.master_volume) / AY_MASTER_VOLUME_MAX;
