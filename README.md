@@ -2,7 +2,7 @@ SlopAY & MIDIAY
 ===============
 
 <div align="center">
-  <img width="674" height="370" alt="slop-ay" src="https://github.com/user-attachments/assets/822186e0-0f21-4b44-9cce-e9224f8018c8" />
+  <img width="754" height="410" alt="slop-ay1" src="https://github.com/user-attachments/assets/99e1c1fb-a236-48ce-8a05-a61400b7ddec" />
 </div>
 
 SlopAY is a mostly vibe-coded AY player in C. It includes a Z80 emulator and support for loading AY files, rendering
