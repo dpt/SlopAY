@@ -17,6 +17,7 @@
 #include <signal.h>
 #include <limits.h>
 #include <math.h>
+#include <termios.h>
 
 #include "slopay-loader.h"
 #include "slopz80.h"
@@ -75,6 +76,7 @@ typedef struct {
 #ifdef SLOPAY_HAVE_MACOS_AUDIO
   slopay_target_macos_t     audio_driver;
 #endif
+  int                       channel_enabled[SLOPAY_MIDI_CHANNELS]; /* 0-2 = AY A/B/C, 3 = beeper; live-toggled by 1/2/3/4 keys */
   uint8_t                   selected_reg;
   unsigned                  total_out_count;
   unsigned                  ay_select_count;
@@ -258,6 +260,65 @@ static void slopay_sigint_handler(int signum)
   slopay_stop_requested = 1;
 }
 
+static struct termios slopay_orig_termios;
+static int slopay_stdin_is_tty = 0;
+
+/* Puts stdin into non-canonical, non-echo, non-blocking mode so single
+ * keypresses can be polled during playback without waiting for Enter. */
+static void slopay_term_raw_enter(void)
+{
+  struct termios raw;
+
+  slopay_stdin_is_tty = isatty(STDIN_FILENO);
+  if (!slopay_stdin_is_tty)
+    return;
+
+  tcgetattr(STDIN_FILENO, &slopay_orig_termios);
+  raw = slopay_orig_termios;
+  raw.c_lflag &= ~(ICANON | ECHO);
+  raw.c_cc[VMIN] = 0;
+  raw.c_cc[VTIME] = 0;
+  tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+}
+
+static void slopay_term_raw_exit(void)
+{
+  if (!slopay_stdin_is_tty)
+    return;
+  tcsetattr(STDIN_FILENO, TCSANOW, &slopay_orig_termios);
+}
+
+/* Polls stdin for 1/2/3/4 keypresses, toggling AY channels A/B/C and the
+ * beeper respectively. Call from the main thread only; ay->mute_flags is a
+ * plain int so a torn read against the audio callback thread is harmless. */
+static void slopay_handle_keys(slopay_io_t *io)
+{
+  char c;
+
+  if (!slopay_stdin_is_tty)
+    return;
+
+  while (read(STDIN_FILENO, &c, 1) == 1) {
+    static const char labels[SLOPAY_MIDI_CHANNELS] = { 'A', 'B', 'C', 'S' };
+    int ch;
+
+    switch (c) {
+    case '1': ch = 0; break;
+    case '2': ch = 1; break;
+    case '3': ch = 2; break;
+    case '4': ch = 3; break;
+    default: continue;
+    }
+
+    io->channel_enabled[ch] = !io->channel_enabled[ch];
+    if (ch < SLOPAY_MIDI_AY_CHANNELS)
+      slopay_chip_enable_channel(io->ay, ch, io->channel_enabled[ch]);
+
+    printf("Channel %c: %s\n", labels[ch], io->channel_enabled[ch] ? "on" : "off");
+    fflush(stdout);
+  }
+}
+
 static void render_audio(void *userdata, float *output, uint32_t frames);
 static void slopay_inject_interrupt(slopz80_t *cpu);
 
@@ -282,10 +343,16 @@ static void slopay_render_headless(slopay_io_t *io)
 
   slopay_stop_requested = 0;
   signal(SIGINT, slopay_sigint_handler);
+  slopay_term_raw_enter();
+  if (slopay_stdin_is_tty)
+    printf("Press 1/2/3/4 to toggle AY channels A/B/C and beeper\n");
 
-  while (io->played_frames < io->target_frames && !slopay_stop_requested)
+  while (io->played_frames < io->target_frames && !slopay_stop_requested) {
+    slopay_handle_keys(io);
     render_audio(io, scratch, 1024);
+  }
 
+  slopay_term_raw_exit();
   signal(SIGINT, SIG_DFL);
 }
 #endif
@@ -679,7 +746,8 @@ static void render_audio(void *userdata, float *output, uint32_t frames)
 
     /* Mix in ZX beeper level (captured from EAR bit on even-port OUT). */
     {
-      const float beeper_raw = io->beeper_level ? io->beeper_gain : 0.0f;
+      const float beeper_raw = (io->beeper_level && io->channel_enabled[SLOPAY_MIDI_BEEPER_VOICE_INDEX])
+                              ? io->beeper_gain : 0.0f;
       const float beeper = slopay_dc_block(beeper_raw,
                                            &io->beeper_dc_prev_in,
                                            &io->beeper_dc_prev_out);
@@ -881,8 +949,11 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     return;
   }
   slopay_chip_set_volume(io.ay, volume_percent);
-  for (int ch = 0; ch < AY_CHANNELS; ch++)
-    slopay_chip_enable_channel(io.ay, ch, (channel_mask & (1u << ch)) != 0);
+  for (int ch = 0; ch < AY_CHANNELS; ch++) {
+    io.channel_enabled[ch] = (channel_mask & (1u << ch)) != 0;
+    slopay_chip_enable_channel(io.ay, ch, io.channel_enabled[ch]);
+  }
+  io.channel_enabled[SLOPAY_MIDI_BEEPER_VOICE_INDEX] = 1;
   slopay_chip_set_stereo_mode(io.ay,
                               stereo_mode == SLOPAY_STEREO_MODE_MONO
                                 ? SLOPAY_CHIP_STEREO_MODE_MONO
@@ -1019,10 +1090,16 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     /* Emulation runs in the audio callback; this loop only waits. */
     slopay_stop_requested = 0;
     signal(SIGINT, slopay_sigint_handler);
+    slopay_term_raw_enter();
+    if (slopay_stdin_is_tty)
+      printf("Press 1/2/3/4 to toggle AY channels A/B/C and beeper\n");
 
-    for (frame = 0; frame < frame_count && !slopay_stop_requested; frame++)
+    for (frame = 0; frame < frame_count && !slopay_stop_requested; frame++) {
+      slopay_handle_keys(&io);
       slopay_sleep_frame();
+    }
 
+    slopay_term_raw_exit();
     signal(SIGINT, SIG_DFL);
 
     slopay_target_macos_stop(&io.audio_driver);
