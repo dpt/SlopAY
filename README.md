@@ -40,13 +40,14 @@ Shared shortcut conventions:
 ### SlopAY syntax
 
 ```text
-SlopAY [-V] [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-P <machine>] [-I <50|300>] [-r <Hz>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>
+SlopAY [-V] [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-c <ABC>] [-P <machine>] [-I <50|300>] [-r <Hz>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] [-S <percent>] <ay_file>
 ```
 
 - `-v, --volume <percent>`: master output volume for AY + beeper (0-100, default 100)
 - `-b, --beeper-volume <percent>`, `--beeper <percent>`: relative beeper level before master scaling (0-100, default 50)
 - `-m, --beeper-mix <mode>`, `--mix <mode>`: beeper mix mode (`add` or `duck`, default `add`)
 - `-x, --stereo-mode <mode>`: stereo mode (`mono`, `abc`, or `acb`, default `abc`)
+- `-c, --channels <ABC>`: AY channels to enable at startup, any subset of `A`, `B`, `C` (default `ABC`)
 - `-P, --machine <machine>`: timing profile (`spectrum` or `cpc`, default `spectrum`)
 - `-I, --cpc-rate <50|300>`: CPC interrupt-rate override (used only with `-P cpc`, default `50`)
 - `-r, --sample-rate <Hz>`: audio sample rate (8000-192000, default 44100)
@@ -56,12 +57,18 @@ SlopAY [-V] [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-P <machine>]
 - `-w, --wav <file.wav>`: write WAV instead of speaker output (requires finite duration from song length or `-t`); in sequential mode this writes per-song files as `<name>-sN.ext`
 - `-M, --midi <file.mid>`: export AY + beeper notes to MIDI (requires finite duration from song length or `-t`); in sequential mode this writes per-song files as `<name>-sN.ext`
 - `-B, --midi-beeper-channel <0-15>`: MIDI channel used for beeper notes in `--midi` export (default `3`)
+- `-S, --speed <percent>`: initial playback speed, tempo only (pitch unaffected) (25-400, default `100`)
 - `-V, --version`: show program version
 - `-h, --help`: show command help
 
 Beeper effective level is `(-v / 100) * (-b / 100)`. For example, `-v 80 -b 50` yields an effective beeper level of `40%`.
 
 Both AY unipolar output and beeper output are DC-blocked in the render path to reduce DC bias in playback/export.
+
+During live playback (speaker output, not `-w`/`-M` export), pressing `1` `2` `3` `4` toggles AY channels A, B, C and
+the beeper on/off respectively. Pressing `+`/`=` speeds playback up, `-`/`_` slows it down (25-400%, 10% steps), and
+`0` resets speed to 100%. This works on both the macOS real-time path and the headless render loop, and only when
+stdin is a terminal.
 
 Examples:
 
@@ -111,6 +118,16 @@ Example piano roll output:
 [PR 000123] A=C5     B=E4     C=---    BEEP=---
 [PR 000124] A=C5     B=E4     C=G3     BEEP=A4
 [PR 000125] A=NOISE  B=---    C=---    BEEP=---
+```
+
+Intended use: Isolate a single AY channel for export.
+```text
+SlopAY -c B -t 30 -w out-channel-b.wav ProjectAY/Spectrum/Games/example.ay
+```
+
+Intended use: Play back at double tempo without changing pitch.
+```text
+SlopAY -S 200 ProjectAY/Spectrum/Demos/example.ay
 ```
 
 Intended use: Compare stereo layouts and platform timing profiles.

@@ -10,6 +10,7 @@
 /* Credit: Strongly inspired by https://github.com/ponceto/aym-js */
 
 #include <stdint.h>
+#include <signal.h>
 
 #include "slopay-chip.h"
 
@@ -122,6 +123,7 @@ struct slopay_chip {
   aynoise_t     noise;
   ayenv_t       env;
   aymixer_t     mixer;
+  volatile sig_atomic_t mute_flags; /* bit ch = channel ch muted, independent of the mixer register; live-toggled from the main thread, read from the audio callback */
 };
 
 /* ----------------------------------------------------------------------- */
@@ -396,7 +398,7 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
       /* Apply envelope-generated volume */
       amplitude = ay->env.volume * 32767 / AY_ENV_MAX_VOL;
 
-    mixed[ch] = (output > 0) ? amplitude : 0;
+    mixed[ch] = (output > 0 && !(ay->mute_flags & (1u << ch))) ? amplitude : 0;
   }
 
   if (ay->mixer.stereo_mode != SLOPAY_CHIP_STEREO_MODE_MONO) {
@@ -439,6 +441,16 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
 void slopay_chip_set_volume(slopay_chip_t *ay, int volume)
 {
   ay->mixer.master_volume = AY_CLAMP(volume, 0, AY_MASTER_VOLUME_MAX);
+}
+
+void slopay_chip_enable_channel(slopay_chip_t *ay, int channel, int enable)
+{
+  if (channel < 0 || channel >= AY_CHANNELS)
+    return;
+  if (enable)
+    ay->mute_flags &= ~(1u << channel);
+  else
+    ay->mute_flags |= (1u << channel);
 }
 
 void slopay_chip_set_stereo_mode(slopay_chip_t *ay, slopay_chip_stereo_mode_t mode)
