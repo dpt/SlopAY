@@ -104,6 +104,7 @@ typedef struct {
 typedef struct {
   int                       master_volume; /* 0..AY_MASTER_VOLUME_MAX */
   slopay_chip_stereo_mode_t stereo_mode;
+  uint8_t                   channel_mask; /* bit N set = channel N audible */
   ay_q15_t                  dc_prev_in_l_q15;
   ay_q15_t                  dc_prev_in_r_q15;
   ay_q15_t                  dc_prev_out_l_q15;
@@ -144,6 +145,7 @@ slopay_chip_t *slopay_chip_create(int clock_freq, int sample_rate)
   /* Set default configuration */
   ay->mixer.master_volume = AY_MASTER_VOLUME_MAX;
   ay->mixer.stereo_mode   = SLOPAY_CHIP_STEREO_MODE_ABC;
+  ay->mixer.channel_mask  = (1u << AY_CHANNELS) - 1u;
 
   for (int ch = 0; ch < AY_CHANNELS; ch++)
     ay->tone[ch].phase = 1;
@@ -396,7 +398,7 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
       /* Apply envelope-generated volume */
       amplitude = ay->env.volume * 32767 / AY_ENV_MAX_VOL;
 
-    mixed[ch] = (output > 0) ? amplitude : 0;
+    mixed[ch] = ((ay->mixer.channel_mask & (1u << ch)) && output > 0) ? amplitude : 0;
   }
 
   if (ay->mixer.stereo_mode != SLOPAY_CHIP_STEREO_MODE_MONO) {
@@ -439,6 +441,11 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay)
 void slopay_chip_set_volume(slopay_chip_t *ay, int volume)
 {
   ay->mixer.master_volume = AY_CLAMP(volume, 0, AY_MASTER_VOLUME_MAX);
+}
+
+void slopay_chip_set_channel_mask(slopay_chip_t *ay, uint8_t mask)
+{
+  ay->mixer.channel_mask = mask & ((1u << AY_CHANNELS) - 1u);
 }
 
 void slopay_chip_set_stereo_mode(slopay_chip_t *ay, slopay_chip_stereo_mode_t mode)

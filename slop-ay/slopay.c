@@ -209,6 +209,26 @@ static int slopay_parse_stereo_mode(const char *text, slopay_stereo_mode_t *out_
   return -1;
 }
 
+static int slopay_parse_channel_mask(const char *text, uint8_t *out_mask)
+{
+  uint8_t mask = 0;
+
+  if (text == NULL)
+    return -1;
+
+  for (; *text != '\0'; text++) {
+    switch (*text) {
+    case 'a': case 'A': mask |= 1u << 0; break;
+    case 'b': case 'B': mask |= 1u << 1; break;
+    case 'c': case 'C': mask |= 1u << 2; break;
+    default: return -1;
+    }
+  }
+
+  *out_mask = mask;
+  return 0;
+}
+
 static int slopay_parse_machine(const char *text, slopay_machine_t *out_machine)
 {
   static const struct {
@@ -820,6 +840,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
                            int beeper_volume_percent,
                            slopay_beeper_mix_mode_t beeper_mix_mode,
                            slopay_stereo_mode_t stereo_mode,
+                           uint8_t channel_mask,
                            slopay_machine_t machine,
                            int cpc_rate_override,
                            int piano_roll_enabled,
@@ -860,6 +881,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     return;
   }
   slopay_chip_set_volume(io.ay, volume_percent);
+  slopay_chip_set_channel_mask(io.ay, channel_mask);
   slopay_chip_set_stereo_mode(io.ay,
                               stereo_mode == SLOPAY_STEREO_MODE_MONO
                                 ? SLOPAY_CHIP_STEREO_MODE_MONO
@@ -1044,7 +1066,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
 
 static void print_usage(const char *prog)
 {
-  printf("Usage: %s [-V] [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-P <machine>] [-I <50|300>] [-r <Hz>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>\n", prog);
+  printf("Usage: %s [-V] [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-c <ABC>] [-P <machine>] [-I <50|300>] [-r <Hz>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] <ay_file>\n", prog);
   printf("\n");
   printf("Loads and displays information about an AY music file.\n");
   printf("Real-time audio output is available on macOS; other POSIX builds\n");
@@ -1057,6 +1079,7 @@ static void print_usage(const char *prog)
   printf("  -m, --beeper-mix <mode>         Beeper mix mode: add or duck (default add)\n");
   printf("      --mix <mode>                Alias for --beeper-mix\n");
   printf("  -x, --stereo-mode <mode>        Stereo mode: mono, abc or acb (default abc)\n");
+  printf("  -c, --channels <ABC>            AY channels to enable, any subset of A, B, C (default ABC)\n");
   printf("  -P, --machine <type>            Timing profile: spectrum or cpc (default spectrum)\n");
   printf("  -I, --cpc-rate <50|300>         CPC interrupt rate override (default 50 in cpc mode)\n");
   printf("  -r, --sample-rate <Hz>          Audio sample rate in Hz (8000-192000, default 44100)\n");
@@ -1113,6 +1136,7 @@ static void print_song_info(slopay_loader_file_t *file,
                              int beeper_volume_percent,
                              slopay_beeper_mix_mode_t beeper_mix_mode,
                              slopay_stereo_mode_t stereo_mode,
+                             uint8_t channel_mask,
                              slopay_machine_t machine,
                              int cpc_rate_override,
                              int piano_roll_enabled,
@@ -1195,6 +1219,7 @@ static void print_song_info(slopay_loader_file_t *file,
                  beeper_volume_percent,
                  beeper_mix_mode,
                  stereo_mode,
+                 channel_mask,
                  machine,
                  cpc_rate_override,
                  piano_roll_enabled,
@@ -1251,6 +1276,7 @@ int main(int argc, char *argv[])
   int sample_rate = SLOPAY_DEFAULT_SAMPLE_RATE;
   slopay_beeper_mix_mode_t beeper_mix_mode = SLOPAY_BEEPER_MIX_ADD;
   slopay_stereo_mode_t stereo_mode = SLOPAY_STEREO_MODE_ABC;
+  uint8_t channel_mask = (1u << 0) | (1u << 1) | (1u << 2);
   slopay_machine_t machine = SLOPAY_MACHINE_SPECTRUM;
   int cpc_rate_override = 0;
   int piano_roll_enabled = 0;
@@ -1270,6 +1296,7 @@ int main(int argc, char *argv[])
     { "beeper-mix",    required_argument, NULL, 'm' },
     { "mix",           required_argument, NULL, 'm' },
     { "stereo-mode",   required_argument, NULL, 'x' },
+    { "channels",      required_argument, NULL, 'c' },
     { "machine",       required_argument, NULL, 'P' },
     { "cpc-rate",      required_argument, NULL, 'I' },
     { "sample-rate",   required_argument, NULL, 'r' },
@@ -1282,7 +1309,7 @@ int main(int argc, char *argv[])
     { NULL,             0,                 NULL,  0  }
   };
 
-  while ((opt = getopt_long(argc, argv, "hVv:b:m:x:P:I:r:ps:t:w:M:B:", long_opts, NULL)) != -1) {
+  while ((opt = getopt_long(argc, argv, "hVv:b:m:x:c:P:I:r:ps:t:w:M:B:", long_opts, NULL)) != -1) {
     switch (opt) {
     case 'h':
       print_usage(argv[0]);
@@ -1316,6 +1343,12 @@ int main(int argc, char *argv[])
     case 'x':
       if (slopay_parse_stereo_mode(optarg, &stereo_mode) != 0) {
         fprintf(stderr, "Error: Stereo mode must be one of: mono, abc, acb\n");
+        return EXIT_FAILURE;
+      }
+      break;
+    case 'c':
+      if (slopay_parse_channel_mask(optarg, &channel_mask) != 0 || channel_mask == 0) {
+        fprintf(stderr, "Error: Channels must be a non-empty subset of A, B, C\n");
         return EXIT_FAILURE;
       }
       break;
@@ -1403,6 +1436,10 @@ int main(int argc, char *argv[])
          ((double)beeper_volume_percent * (double)volume_percent) / 100.0);
   printf("Beeper mix: %s\n", slopay_beeper_mix_mode_name(beeper_mix_mode));
   printf("Stereo mode: %s\n", slopay_stereo_mode_name(stereo_mode));
+  printf("Channels: %s%s%s\n",
+         (channel_mask & (1u << 0)) ? "A" : "",
+         (channel_mask & (1u << 1)) ? "B" : "",
+         (channel_mask & (1u << 2)) ? "C" : "");
   printf("Machine profile: %s\n", slopay_machine_name(machine));
   if (machine == SLOPAY_MACHINE_CPC && cpc_rate_override > 0)
     printf("CPC interrupt rate override: %d Hz\n", cpc_rate_override);
@@ -1438,6 +1475,7 @@ int main(int argc, char *argv[])
                     beeper_volume_percent,
                     beeper_mix_mode,
                     stereo_mode,
+                    channel_mask,
                     machine,
                     cpc_rate_override,
                     piano_roll_enabled,
@@ -1469,6 +1507,7 @@ int main(int argc, char *argv[])
                       beeper_volume_percent,
                       beeper_mix_mode,
                       stereo_mode,
+                      channel_mask,
                       machine,
                       cpc_rate_override,
                       piano_roll_enabled,
