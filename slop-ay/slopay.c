@@ -956,7 +956,6 @@ static void slopay_run_z80(slopay_loader_file_t *file,
   slopay_io_t io;
   int frame_count;
 #ifdef SLOPAY_HAVE_MACOS_AUDIO
-  int frame;
   int audio_started = 0;
 #endif
 
@@ -1128,7 +1127,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     if (slopay_stdin_is_tty)
       printf("Press 1/2/3/4 to toggle AY channels A/B/C and beeper, +/- to change speed, 0 to reset\n");
 
-    for (frame = 0; frame < frame_count && !slopay_stop_requested; frame++) {
+    while (io.played_frames < frame_count && !slopay_stop_requested) {
       slopay_handle_keys(&io);
       slopay_sleep_frame();
     }
