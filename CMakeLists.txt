@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 4.2)
 project(SlopAY VERSION 0.2.0 LANGUAGES C)
 
-set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 include(CTest)

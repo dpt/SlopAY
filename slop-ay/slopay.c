@@ -18,7 +18,6 @@
 #include <limits.h>
 #include <math.h>
 #include <termios.h>
-#include <stdatomic.h>
 
 #include "slopay-loader.h"
 #include "slopz80.h"
@@ -80,7 +79,7 @@ typedef struct {
 #ifdef SLOPAY_HAVE_MACOS_AUDIO
   slopay_target_macos_t     audio_driver;
 #endif
-  _Atomic int               channel_enabled[SLOPAY_MIDI_CHANNELS]; /* 0-2 = AY A/B/C, 3 = beeper; live-toggled by 1/2/3/4 keys, read by the audio callback */
+  volatile sig_atomic_t     channel_enabled[SLOPAY_MIDI_CHANNELS]; /* 0-2 = AY A/B/C, 3 = beeper; live-toggled by 1/2/3/4 keys, read by the audio callback */
   uint8_t                   selected_reg;
   unsigned                  total_out_count;
   unsigned                  ay_select_count;
@@ -103,7 +102,7 @@ typedef struct {
   unsigned                  beeper_toggle_count_last;
   int                       ay_clock_freq;
   int                       frame_rate;
-  _Atomic int               samples_per_frame; /* live-adjusted by speed keys, read by the audio callback */
+  volatile sig_atomic_t     samples_per_frame; /* live-adjusted by speed keys, read by the audio callback */
   int                       base_samples_per_frame; /* samples_per_frame at 100% speed */
   int                       speed_percent; /* live-adjusted with +/- and 0 keys; main thread only */
   int                       z80_cycles_per_sample_fxp;
@@ -321,7 +320,8 @@ static void slopay_set_speed(slopay_io_t *io, int percent)
  * +/- adjust playback speed, 0 resets it to 100%.
  * Call from the main thread only; the fields it writes (io's
  * channel_enabled/samples_per_frame and the AY chip's mute flags) are
- * declared _Atomic so the audio callback thread can read them safely. */
+ * volatile sig_atomic_t so the audio callback thread can read the
+ * current value without tearing (project targets C99, no <stdatomic.h>). */
 static void slopay_handle_keys(slopay_io_t *io)
 {
   char c;

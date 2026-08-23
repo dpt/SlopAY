@@ -10,7 +10,7 @@
 /* Credit: Strongly inspired by https://github.com/ponceto/aym-js */
 
 #include <stdint.h>
-#include <stdatomic.h>
+#include <signal.h>
 
 #include "slopay-chip.h"
 
@@ -123,7 +123,7 @@ struct slopay_chip {
   aynoise_t     noise;
   ayenv_t       env;
   aymixer_t     mixer;
-  _Atomic unsigned int mute_flags; /* bit ch = channel ch muted, independent of the mixer register; live-toggled from the main thread, read from the audio callback */
+  volatile sig_atomic_t mute_flags; /* bit ch = channel ch muted, independent of the mixer register; live-toggled from the main thread, read from the audio callback */
 };
 
 /* ----------------------------------------------------------------------- */
