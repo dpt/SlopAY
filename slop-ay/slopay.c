@@ -881,7 +881,8 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     return;
   }
   slopay_chip_set_volume(io.ay, volume_percent);
-  slopay_chip_set_channel_mask(io.ay, channel_mask);
+  for (int ch = 0; ch < AY_CHANNELS; ch++)
+    slopay_chip_enable_channel(io.ay, ch, (channel_mask & (1u << ch)) != 0);
   slopay_chip_set_stereo_mode(io.ay,
                               stereo_mode == SLOPAY_STEREO_MODE_MONO
                                 ? SLOPAY_CHIP_STEREO_MODE_MONO

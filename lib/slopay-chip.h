@@ -73,7 +73,7 @@ uint8_t slopay_chip_read_register(slopay_chip_t *ay, slopay_chip_reg_t reg);
 slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay);
 void slopay_chip_set_volume(slopay_chip_t *ay, int volume);
 void slopay_chip_set_stereo_mode(slopay_chip_t *ay, slopay_chip_stereo_mode_t mode);
-void slopay_chip_set_channel_mask(slopay_chip_t *ay, uint8_t mask); /* bit0=A bit1=B bit2=C, 1=audible */
+void slopay_chip_enable_channel(slopay_chip_t *ay, int channel, int enable); /* channel: 0=A 1=B 2=C */
 
 #ifdef __cplusplus
 }
