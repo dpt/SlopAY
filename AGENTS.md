@@ -1,37 +1,92 @@
 # AGENTS.md
 
-## Project Snapshot
-- `SlopAY` is a C codebase for loading `.ay` music files, emulating a Z80 player, and rendering AY-3-8912 audio either in real time (macOS Core Audio) or to WAV.
-- Main runtime flow lives in `slop-ay/slopay.c`; reusable cross-target pieces are in `lib/`.
-- `ProjectAY/` is the local corpus of demo/game `.ay` files for manual regression checks.
+Guidance for coding agents working in this repository. This file is the single source of truth; `CLAUDE.md` just
+points here.
 
-## Architecture You Need First
-- **Loader layer:** `slop-ay/slopay-loader.c` parses AY files (big-endian fields + signed relative offsets) into `slopay_loader_file_t` and `slopay_loader_song_t` (`slop-ay/slopay-loader.h`).
-- **Playback core:** `slop-ay/slopay.c` builds Player v3 memory (`slopay_build_player_v3_memory`), loads song blocks (`slopay_load_song_blocks`), seeds Z80 regs, then drives execution.
-- **CPU/audio bridge:** Z80 port callbacks in `slop-ay/slopay.c` map OUT traffic to AY register select/data writes and beeper state; this is the key cross-component contract.
-- **Sound generation:** `lib/slopay-chip.c` exposes register-driven synthesis (`slopay_chip_write_register`, `slopay_chip_get_sample`) with fixed-point timing and stereo mixing.
-- **Output drivers:** `lib/slopay-target-macos.c` handles real-time Core Audio callback output; `slop-ay/slopay-target-wave.c` reuses the same render callback for offline WAV encoding.
+## Project snapshot
 
-## Critical Data/Timing Rules
-- AY format parsing follows `ay-format.md`: Motorola order (big-endian), 16-bit signed relative pointers, block terminator at `address == 0`.
-- Player timing is Spectrum-like and hard-coded in `slop-ay/slopay.c`: Z80 3,494,400 Hz, AY 1,773,450 Hz, 50 Hz frame interrupt cadence, 44.1 kHz audio.
-- Infinite songs are represented as `song_length == 0`; WAV export requires a finite duration (`-t` or nonzero length).
+SlopAY is a C codebase that loads `.ay` music files, emulates a Z80 CPU running the original player code, and
+renders AY-3-8912 chip audio either in real time (macOS Core Audio) or to WAV/MIDI. `MIDIAY` is a companion
+interactive MIDI shell for controlling the AY chip live (macOS only). See `README.md` for full CLI usage and flags.
 
-## Build + Run Reality (Current Repo State)
-- `CMakeLists.txt` defines two targets on macOS: `SlopAY` (main player CLI) and `MIDIAY` (interactive MIDI shell).
-- `SlopAY` uses loader + Z80 + AY chip + WAV target modules and adds the macOS target module only when `APPLE` is true.
-- `MIDIAY` is macOS-only in CMake and links `CoreMIDI` plus audio frameworks with `polyblep`/`reverb` helpers.
+## Build
 
-## Developer Workflows Used In This Codebase
-- Use `slop-ay/slopay.c` CLI flags for diagnostics and reproducibility:
-  - `-p` prints per-frame note/pitch view (good for timing/debug)
-  - `-w out.wav` uses deterministic offline render path
-  - `-t <sec>` bounds runtime (required for unknown-length songs in WAV mode)
-- Regression checks are usually manual against files under `ProjectAY/*/Demos` and `ProjectAY/*/Games`.
-- Z80 opcode coverage gaps are surfaced at runtime via `slopz80_missing_opcode_snapshot` and printed summaries in `slopay_dump_missing_opcodes`.
+Standard out-of-tree CMake/Ninja build; a `cmake-build-debug` directory is already configured.
 
-## Code Patterns and Conventions
-- Keep parsing helpers explicit and local (`read_be16`, `read_be16_signed`, `rel_ptr` in `slop-ay/slopay-loader.c`); avoid hidden endian/pointer magic.
-- New audio outputs should follow existing driver pattern: callback signature compatible with `render_audio` and lifecycle `init/start/stop/cleanup`.
-- Port-decoding logic is mask-based (`slopay_is_register_port`, `slopay_is_data_port`) and should stay centralized to avoid behavioral drift.
-- This project favors C99 + simple structs over deep abstraction; preserve directness unless a change truly crosses module boundaries.
+```sh
+cmake --build cmake-build-debug --target SlopAY   # main player
+cmake --build cmake-build-debug --target MIDIAY   # macOS-only interactive MIDI shell
+cmake --build cmake-build-debug                   # everything, including tests
+```
+
+If build files are missing or `CMakeLists.txt` changes, reconfigure first: `cmake -S . -B cmake-build-debug`.
+
+- Project targets **C99, no higher** — do not use C11 features (`_Atomic`, `<stdatomic.h>`, etc). For state shared
+  between the main thread and the macOS audio callback, use `volatile sig_atomic_t` instead.
+- Built with `-Wall -Wextra -pedantic`; keep new code warning-clean.
+- `SlopAY` and `MIDIAY` only get macOS Core Audio/CoreMIDI sources and frameworks linked when `APPLE` is true
+  (`SLOPAY_HAVE_MACOS_AUDIO`); on other POSIX platforms `SlopAY` still builds but runs headless unless writing WAV.
+
+## Tests
+
+```sh
+ctest --test-dir cmake-build-debug              # all tests
+ctest --test-dir cmake-build-debug -R <name>    # single test, e.g. slopay-chip-test
+```
+
+Tests: `slopay-chip-test` (`tests/slopay-chip-test.c`), `slopay-loader-test` (`tests/slopay-loader-test.c`), plus
+smoke tests that just run `SlopAY --version` / `--help` and pattern-match the output.
+
+There's no automated audio-correctness test; regression checks are manual, listening to files under
+`ProjectAY/*/Demos` and `ProjectAY/*/Games` (a local corpus of demo/game `.ay` files), typically using:
+- `-p` to print a per-frame piano-roll view for timing/debug
+- `-w out.wav -t <sec>` for a deterministic offline render to compare
+
+## Architecture
+
+- **Loader layer** — `slop-ay/slopay-loader.c` / `.h` parses `.ay` files (big-endian fields, signed relative
+  offsets per `ay-format.md`, block terminator at `address == 0`) into `slopay_loader_file_t` /
+  `slopay_loader_song_t`.
+- **Playback core** — `slop-ay/slopay.c` builds Player v3 memory (`slopay_build_player_v3_memory`), loads song
+  blocks (`slopay_load_song_blocks`), seeds Z80 registers, then drives execution via `slopay_run_z80`.
+- **CPU/audio bridge** — Z80 port I/O callbacks in `slop-ay/slopay.c` map `OUT` traffic to AY register
+  select/data writes and beeper state; this is the key cross-component contract between the emulator and the
+  sound chip.
+- **Sound generation** — `lib/slopay-chip.c` / `.h` is the AY-3-8912 emulator: register-driven synthesis
+  (`slopay_chip_write_register`, `slopay_chip_get_sample`), fixed-point timing, stereo mixing, per-channel mute
+  (`slopay_chip_enable_channel`). Tone/noise/envelope generators always run, even when a channel is muted —
+  muting only gates the mixed output, since stopping a generator would corrupt phase/LFSR continuity.
+- **Z80 emulator** — `slop-ay/slopz80.c` / `.h`. Missing-opcode coverage gaps surface at runtime via
+  `slopz80_missing_opcode_snapshot` / `slopay_dump_missing_opcodes`.
+- **Output drivers** — `lib/slopay-target-macos.c` (real-time Core Audio callback), `slop-ay/slopay-target-wave.c`
+  (offline WAV encode) and `slop-ay/slopay-target-midi.c` (MIDI export) all reuse the same `render_audio` callback
+  shape; a new output target should follow the same `init`/`start`/`stop`/`cleanup` lifecycle.
+- **Live playback control** — during real-time playback (not WAV/MIDI export), raw terminal input
+  (`slopay_term_raw_enter`/`exit` in `slop-ay/slopay.c`, `<termios.h>`) lets `1`/`2`/`3`/`4` toggle AY channels
+  A/B/C and the beeper, `+`/`-`/`0` adjust/reset playback speed, `r` cycle the reverb delay and `[`/`]` adjust the
+  reverb mix — only active when stdin is a TTY. Playback speed scales `samples_per_frame` (real-time cadence between
+  Z80 interrupt frames) and Z80 cycles per sample (so each frame keeps its full T-state budget), not the AY clock,
+  so AY pitch is unaffected; beeper pitch, being Z80-timed, scales with speed.
+- **Reverb** — `SlopAY` builds MIDIAY's portable `midi-ay/effects/reverb.c` and applies it to the final stereo mix
+  in `render_audio`. Delay changes from the main thread are requested via `volatile sig_atomic_t` fields and
+  applied inside the audio callback, so only that thread touches reverb state.
+- **`midi-ay/`** — `MIDIAY`'s interactive shell (`midiay.c`) plus `effects/` (reverb, echo), `notes/` (chords,
+  arpeggiator) and `oscillators/` (polyBLEP) helpers. All macOS-only, except `effects/reverb.c`, which `SlopAY`
+  also uses.
+
+### Timing rules
+
+Player timing is Spectrum-like and mostly hard-coded per machine profile in `slop-ay/slopay.c`: Z80 3,494,400 Hz,
+AY 1,773,450 Hz, 50 Hz frame interrupt cadence by default (Amstrad CPC support allows a configurable interrupt
+rate), 44.1 kHz audio by default. Infinite songs have `song_length == 0`; WAV/MIDI export requires a finite
+duration (explicit `-t` or a nonzero song length).
+
+## Code conventions
+
+- Declare variables separately from use, grouped at the top of scope, ordered by use.
+- Favour explicit, local parsing helpers (e.g. `read_be16`, `read_be16_signed`, `rel_ptr` in
+  `slop-ay/slopay-loader.c`) over hidden endian/pointer magic.
+- Port-decoding logic is mask-based (`slopay_is_register_port`, `slopay_is_data_port`) and should stay
+  centralized rather than duplicated.
+- This project favours simple structs over deep abstraction — preserve directness unless a change genuinely
+  crosses module boundaries.
