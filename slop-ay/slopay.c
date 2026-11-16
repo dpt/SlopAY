@@ -882,14 +882,17 @@ static void render_audio(void *userdata, float *output, uint32_t frames)
     return;
 
   /* Apply a delay change from the main thread here, so only this thread
-   * touches the reverb state. */
+   * touches the reverb state. Clear the buffers too: reverb_set_delay
+   * restarts the ring, so old contents would play back as mistimed echoes. */
   if (io->reverb_ms != io->reverb_applied_ms) {
     io->reverb_applied_ms = io->reverb_ms;
     if (io->reverb_applied_ms > 0) {
       const size_t delay = (size_t)io->reverb_applied_ms * (size_t)io->sample_rate / 1000u;
 
-      reverb_set_delay(io->reverb[0], delay);
-      reverb_set_delay(io->reverb[1], delay);
+      for (int ch = 0; ch < 2; ch++) {
+        reverb_set_delay(io->reverb[ch], delay);
+        memset(io->reverb[ch]->buffer, 0, io->reverb[ch]->max_size * sizeof(reverb_sample_t));
+      }
     }
   }
 
@@ -943,13 +946,13 @@ static void render_audio(void *userdata, float *output, uint32_t frames)
     }
 
     /* The reverb returns dry plus echo; keep only reverb_mix_percent of the
-     * echo. It runs even when off so turning it on echoes recent audio. */
-    {
+     * echo. */
+    if (io->reverb_applied_ms > 0) {
       const reverb_sample_t dry_l = (reverb_sample_t)(out_l * 32767.0f);
       const reverb_sample_t dry_r = (reverb_sample_t)(out_r * 32767.0f);
       const float wet_l = (float)(reverb_process(io->reverb[0], dry_l) - dry_l) / 32767.0f;
       const float wet_r = (float)(reverb_process(io->reverb[1], dry_r) - dry_r) / 32767.0f;
-      const float mix = io->reverb_applied_ms > 0 ? (float)io->reverb_mix_percent / 100.0f : 0.0f;
+      const float mix = (float)io->reverb_mix_percent / 100.0f;
 
       out_l = slopay_clamp_unit(out_l + wet_l * mix);
       out_r = slopay_clamp_unit(out_r + wet_r * mix);
