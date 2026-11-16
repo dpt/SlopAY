@@ -27,6 +27,7 @@
 #endif
 #include "slopay-target-wave.h"
 #include "slopay-target-midi.h"
+#include "effects/reverb.h"
 
 #define NELEMS(x) (sizeof(x) / sizeof((x)[0]))
 
@@ -45,6 +46,10 @@
 #define SLOPAY_SPEED_MIN 25 /* Slowest playback speed, percent */
 #define SLOPAY_SPEED_MAX 400 /* Fastest playback speed, percent */
 #define SLOPAY_SPEED_STEP 10 /* Live +/- key adjustment step, percent */
+#define SLOPAY_REVERB_MAX_MS 1000 /* Longest reverb delay, milliseconds */
+#define SLOPAY_REVERB_DEFAULT_MIX 30 /* Reverb wet level, percent of the reverb's own echo */
+#define SLOPAY_OPT_REVERB_MIX 1000 /* getopt value for long-only --reverb-mix */
+#define SLOPAY_REVERB_MIX_STEP 10 /* Live [/] key adjustment step, percent */
 #define SLOPAY_STALL_POLLS 100 /* Wait-loop polls (~2 s) with no frame progress before giving up on the audio device */
 
 #ifndef SLOPAY_VERSION_STRING
@@ -115,6 +120,11 @@ typedef struct {
   slopay_machine_t          machine;
   uint8_t                   cpc_psg_control;
   uint8_t                   cpc_ppi_port_a;
+  reverb_t                 *reverb[2]; /* left/right; always created, sized for SLOPAY_REVERB_MAX_MS */
+  int                       sample_rate;
+  volatile sig_atomic_t     reverb_ms; /* live-adjusted by the r key, 0 = off; read by the audio callback */
+  volatile sig_atomic_t     reverb_mix_percent; /* live-adjusted by [ and ]; read by the audio callback */
+  int                       reverb_applied_ms; /* delay the reverbs are set to; audio callback only */
 } slopay_io_t;
 
 static float slopay_clamp_unit(float v)
@@ -352,7 +362,8 @@ static void slopay_live_begin(void)
     return;
   }
 
-  printf("Press 1/2/3/4 to toggle AY channels A/B/C and beeper, +/- to change speed, 0 to reset\n");
+  printf("Press 1/2/3/4 to toggle AY channels A/B/C and beeper, +/- to change speed, 0 to reset,\n"
+         "r to cycle reverb delay, [/] to change reverb mix\n");
 }
 
 static void slopay_live_end(void)
@@ -380,9 +391,46 @@ static void slopay_set_speed(slopay_io_t *io, int percent)
   fflush(stdout);
 }
 
+/* Steps the reverb delay through off and a few presets. */
+static void slopay_cycle_reverb(slopay_io_t *io)
+{
+  static const int presets[] = { 60, 125, 250, 500, SLOPAY_REVERB_MAX_MS };
+  size_t i;
+  int next;
+
+  next = 0;
+  for (i = 0; i < NELEMS(presets); i++) {
+    if (presets[i] > io->reverb_ms) {
+      next = presets[i];
+      break;
+    }
+  }
+  io->reverb_ms = next;
+
+  if (next > 0)
+    printf("Reverb: %d ms\n", next);
+  else
+    printf("Reverb: off\n");
+  fflush(stdout);
+}
+
+static void slopay_set_reverb_mix(slopay_io_t *io, int percent)
+{
+  if (percent < 0)
+    percent = 0;
+  if (percent > 100)
+    percent = 100;
+
+  io->reverb_mix_percent = percent;
+
+  printf("Reverb mix: %d%%\n", percent);
+  fflush(stdout);
+}
+
 /* Polls stdin for keypresses during playback:
  * 1/2/3/4 toggle AY channels A/B/C and the beeper.
  * +/- adjust playback speed, 0 resets it to 100%.
+ * r cycles the reverb delay, [/] adjust the reverb mix.
  * Call from the main thread only; the fields it writes (io's
  * beeper_enabled/samples_per_frame and the AY chip's mute flags) are
  * volatile sig_atomic_t so the audio callback thread can read the
@@ -418,6 +466,15 @@ static void slopay_handle_keys(slopay_io_t *io)
       continue;
     case '0':
       slopay_set_speed(io, 100);
+      continue;
+    case 'r': case 'R':
+      slopay_cycle_reverb(io);
+      continue;
+    case '[':
+      slopay_set_reverb_mix(io, io->reverb_mix_percent - SLOPAY_REVERB_MIX_STEP);
+      continue;
+    case ']':
+      slopay_set_reverb_mix(io, io->reverb_mix_percent + SLOPAY_REVERB_MIX_STEP);
       continue;
     default: continue;
     }
@@ -824,6 +881,21 @@ static void render_audio(void *userdata, float *output, uint32_t frames)
   if (io == NULL || io->ay == NULL || output == NULL)
     return;
 
+  /* Apply a delay change from the main thread here, so only this thread
+   * touches the reverb state. Clear the buffers too: reverb_set_delay
+   * restarts the ring, so old contents would play back as mistimed echoes. */
+  if (io->reverb_ms != io->reverb_applied_ms) {
+    io->reverb_applied_ms = io->reverb_ms;
+    if (io->reverb_applied_ms > 0) {
+      const size_t delay = (size_t)io->reverb_applied_ms * (size_t)io->sample_rate / 1000u;
+
+      for (int ch = 0; ch < 2; ch++) {
+        reverb_set_delay(io->reverb[ch], delay);
+        memset(io->reverb[ch]->buffer, 0, io->reverb[ch]->max_size * sizeof(reverb_sample_t));
+      }
+    }
+  }
+
   for (uint32_t i = 0; i < frames; i++) {
     float out_l;
     float out_r;
@@ -871,6 +943,19 @@ static void render_audio(void *userdata, float *output, uint32_t frames)
                             : SLOPAY_BEEPER_ADD_AY_GAIN;
       out_l = slopay_clamp_unit(out_l * ay_gain + beeper);
       out_r = slopay_clamp_unit(out_r * ay_gain + beeper);
+    }
+
+    /* The reverb returns dry plus echo; keep only reverb_mix_percent of the
+     * echo. */
+    if (io->reverb_applied_ms > 0) {
+      const reverb_sample_t dry_l = (reverb_sample_t)(out_l * 32767.0f);
+      const reverb_sample_t dry_r = (reverb_sample_t)(out_r * 32767.0f);
+      const float wet_l = (float)(reverb_process(io->reverb[0], dry_l) - dry_l) / 32767.0f;
+      const float wet_r = (float)(reverb_process(io->reverb[1], dry_r) - dry_r) / 32767.0f;
+      const float mix = (float)io->reverb_mix_percent / 100.0f;
+
+      out_l = slopay_clamp_unit(out_l + wet_l * mix);
+      out_r = slopay_clamp_unit(out_r + wet_r * mix);
     }
 
     output[i * 2 + 0] = out_l;
@@ -1025,6 +1110,8 @@ static void slopay_run_z80(slopay_loader_file_t *file,
                            slopay_stereo_mode_t stereo_mode,
                            uint8_t channel_mask,
                            int speed_percent,
+                           int reverb_ms,
+                           int reverb_mix_percent,
                            slopay_machine_t machine,
                            int cpc_rate_override,
                            int piano_roll_enabled,
@@ -1167,6 +1254,22 @@ static void slopay_run_z80(slopay_loader_file_t *file,
             io.midi_beeper_channel, profile->name);
    }
 
+  io.sample_rate = sample_rate;
+  io.reverb_ms = reverb_ms;
+  io.reverb_mix_percent = reverb_mix_percent;
+  io.reverb_applied_ms = 0; /* render_audio sets the delay on its first call */
+  for (ch = 0; ch < 2; ch++) {
+    io.reverb[ch] = reverb_create((size_t)SLOPAY_REVERB_MAX_MS * (size_t)sample_rate / 1000u);
+    if (io.reverb[ch] == NULL) {
+      fprintf(stderr, "Error: Failed to create reverb\n");
+      slopay_finalize_midi_export(&io);
+      reverb_destroy(io.reverb[0]);
+      slopay_chip_destroy(io.ay);
+      slopz80_destroy(cpu);
+      return;
+    }
+  }
+
   if (wav_filename != NULL) {
     /* ---- WAV file output mode ---------------------------------------- */
     slopay_target_wave_t wav_driver;
@@ -1175,6 +1278,8 @@ static void slopay_run_z80(slopay_loader_file_t *file,
      if (slopay_target_wave_init(&wav_driver, wav_filename, sample_rate,
                               render_audio, &io) != 0) {
        fprintf(stderr, "Error: Failed to open WAV file '%s'\n", wav_filename);
+      reverb_destroy(io.reverb[0]);
+      reverb_destroy(io.reverb[1]);
       slopay_chip_destroy(io.ay);
       slopz80_destroy(cpu);
       return;
@@ -1196,6 +1301,8 @@ static void slopay_run_z80(slopay_loader_file_t *file,
      if (slopay_target_macos_init(&io.audio_driver, sample_rate, render_audio, &io) != noErr) {
        fprintf(stderr, "Error: Failed to initialize macOS audio driver\n");
       slopay_finalize_midi_export(&io);
+      reverb_destroy(io.reverb[0]);
+      reverb_destroy(io.reverb[1]);
       slopay_chip_destroy(io.ay);
       slopz80_destroy(cpu);
       return;
@@ -1205,6 +1312,8 @@ static void slopay_run_z80(slopay_loader_file_t *file,
       fprintf(stderr, "Error: Failed to start macOS audio driver\n");
       slopay_target_macos_cleanup(&io.audio_driver);
       slopay_finalize_midi_export(&io);
+      reverb_destroy(io.reverb[0]);
+      reverb_destroy(io.reverb[1]);
       slopay_chip_destroy(io.ay);
       slopz80_destroy(cpu);
       return;
@@ -1268,13 +1377,15 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     slopay_target_macos_cleanup(&io.audio_driver);
 #endif
   }
+  reverb_destroy(io.reverb[0]);
+  reverb_destroy(io.reverb[1]);
   slopay_chip_destroy(io.ay);
   slopz80_destroy(cpu);
 }
 
 static void print_usage(const char *prog)
 {
-  printf("Usage: %s [-V] [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-c <ABC>] [-P <machine>] [-I <50|300>] [-r <Hz>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] [-S <percent>] <ay_file>\n", prog);
+  printf("Usage: %s [-V] [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-c <ABC>] [-P <machine>] [-I <50|300>] [-r <Hz>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] [-S <percent>] [-R <ms>] [--reverb-mix <percent>] <ay_file>\n", prog);
   printf("\n");
   printf("Loads and displays information about an AY music file.\n");
   printf("Real-time audio output is available on macOS; other POSIX builds\n");
@@ -1305,6 +1416,10 @@ static void print_usage(const char *prog)
   printf("  -B, --midi-beeper-channel <0-15> MIDI channel for beeper notes (default 3)\n");
   printf("  -S, --speed <percent>           Initial playback speed (%d-%d, default 100)\n",
          SLOPAY_SPEED_MIN, SLOPAY_SPEED_MAX);
+  printf("  -R, --reverb <ms>               Reverb delay in milliseconds (0-%d, default 0 = off)\n",
+         SLOPAY_REVERB_MAX_MS);
+  printf("      --reverb-mix <percent>      Reverb echo level (0-100, default %d)\n",
+         SLOPAY_REVERB_DEFAULT_MIX);
   printf("  -V, --version                   Show program version\n");
   printf("  -h, --help                      Show this help\n");
   printf("\n");
@@ -1348,6 +1463,8 @@ static void print_song_info(slopay_loader_file_t *file,
                              slopay_stereo_mode_t stereo_mode,
                              uint8_t channel_mask,
                              int speed_percent,
+                             int reverb_ms,
+                             int reverb_mix_percent,
                              slopay_machine_t machine,
                              int cpc_rate_override,
                              int piano_roll_enabled,
@@ -1432,6 +1549,8 @@ static void print_song_info(slopay_loader_file_t *file,
                  stereo_mode,
                  channel_mask,
                  speed_percent,
+                 reverb_ms,
+                 reverb_mix_percent,
                  machine,
                  cpc_rate_override,
                  piano_roll_enabled,
@@ -1495,6 +1614,8 @@ int main(int argc, char *argv[])
   int midi_beeper_channel = 3;
   int max_seconds = 0;
   int speed_percent = 100;
+  int reverb_ms = 0;
+  int reverb_mix_percent = SLOPAY_REVERB_DEFAULT_MIX;
   uint8_t song_index = 0;
   int have_song_index = 0;
   long parsed;
@@ -1520,10 +1641,12 @@ int main(int argc, char *argv[])
     { "midi",          required_argument, NULL, 'M' },
     { "midi-beeper-channel", required_argument, NULL, 'B' },
     { "speed",         required_argument, NULL, 'S' },
+    { "reverb",        required_argument, NULL, 'R' },
+    { "reverb-mix",    required_argument, NULL, SLOPAY_OPT_REVERB_MIX },
     { NULL,             0,                 NULL,  0  }
   };
 
-  while ((opt = getopt_long(argc, argv, "hVv:b:m:x:c:P:I:r:ps:t:w:M:B:S:", long_opts, NULL)) != -1) {
+  while ((opt = getopt_long(argc, argv, "hVv:b:m:x:c:P:I:r:ps:t:w:M:B:S:R:", long_opts, NULL)) != -1) {
     switch (opt) {
     case 'h':
       print_usage(argv[0]);
@@ -1631,6 +1754,23 @@ int main(int argc, char *argv[])
       }
       speed_percent = (int)parsed;
       break;
+    case 'R':
+      parsed = strtol(optarg, &endptr, 10);
+      if (*optarg == '\0' || *endptr != '\0' || parsed < 0 || parsed > SLOPAY_REVERB_MAX_MS) {
+        fprintf(stderr, "Error: Reverb must be an integer from 0 to %d (milliseconds)\n",
+                SLOPAY_REVERB_MAX_MS);
+        return EXIT_FAILURE;
+      }
+      reverb_ms = (int)parsed;
+      break;
+    case SLOPAY_OPT_REVERB_MIX:
+      parsed = strtol(optarg, &endptr, 10);
+      if (*optarg == '\0' || *endptr != '\0' || parsed < 0 || parsed > 100) {
+        fprintf(stderr, "Error: Reverb mix must be an integer from 0 to 100 (percent)\n");
+        return EXIT_FAILURE;
+      }
+      reverb_mix_percent = (int)parsed;
+      break;
     default:
       fprintf(stderr, "Error: Unknown or malformed option\n");
       print_usage(argv[0]);
@@ -1664,6 +1804,10 @@ int main(int argc, char *argv[])
          (channel_mask & (1u << 1)) ? "B" : "",
          (channel_mask & (1u << 2)) ? "C" : "");
   printf("Speed: %d%%\n", speed_percent);
+  if (reverb_ms > 0)
+    printf("Reverb: %d ms, mix %d%%\n", reverb_ms, reverb_mix_percent);
+  else
+    printf("Reverb: off\n");
   printf("Machine profile: %s\n", slopay_machine_name(machine));
   if (machine == SLOPAY_MACHINE_CPC && cpc_rate_override > 0)
     printf("CPC interrupt rate override: %d Hz\n", cpc_rate_override);
@@ -1701,6 +1845,8 @@ int main(int argc, char *argv[])
                     stereo_mode,
                     channel_mask,
                     speed_percent,
+                    reverb_ms,
+                    reverb_mix_percent,
                     machine,
                     cpc_rate_override,
                     piano_roll_enabled,
@@ -1734,6 +1880,8 @@ int main(int argc, char *argv[])
                       stereo_mode,
                       channel_mask,
                       speed_percent,
+                      reverb_ms,
+                      reverb_mix_percent,
                       machine,
                       cpc_rate_override,
                       piano_roll_enabled,
