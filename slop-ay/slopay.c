@@ -105,7 +105,8 @@ typedef struct {
   volatile sig_atomic_t     samples_per_frame; /* live-adjusted by speed keys, read by the audio callback */
   int                       base_samples_per_frame; /* samples_per_frame at 100% speed */
   int                       speed_percent; /* live-adjusted with +/- and 0 keys; main thread only */
-  int                       z80_cycles_per_sample_fxp;
+  int                       base_z80_cycles_per_sample_fxp; /* z80_cycles_per_sample_fxp at 100% speed */
+  volatile sig_atomic_t     z80_cycles_per_sample_fxp; /* scaled with speed so each frame keeps its full T-state budget; read by the audio callback */
   int                       target_frames;
   int                       played_frames;
   int                       samples_to_next_frame;
@@ -317,6 +318,7 @@ static void slopay_set_speed(slopay_io_t *io, int percent)
 
   io->speed_percent = percent;
   io->samples_per_frame = (io->base_samples_per_frame * 100) / percent;
+  io->z80_cycles_per_sample_fxp = (io->base_z80_cycles_per_sample_fxp * percent) / 100;
 
   printf("Speed: %d%%\n", percent);
   fflush(stdout);
@@ -1060,7 +1062,8 @@ static void slopay_run_z80(slopay_loader_file_t *file,
   io.speed_percent = speed_percent;
   io.samples_per_frame = (io.base_samples_per_frame * 100) / io.speed_percent;
   io.samples_to_next_frame = io.samples_per_frame;
-  io.z80_cycles_per_sample_fxp = (profile->z80_clock_freq << Z80_CYCLE_FXP) / sample_rate;
+  io.base_z80_cycles_per_sample_fxp = (profile->z80_clock_freq << Z80_CYCLE_FXP) / sample_rate;
+  io.z80_cycles_per_sample_fxp = (io.base_z80_cycles_per_sample_fxp * io.speed_percent) / 100;
   io.z80_cycle_error_fxp = 0;
   /* Global volume (-v) scales both AY and beeper; -b remains relative beeper trim. */
   io.beeper_gain = ((float)beeper_volume_percent / 100.0f) *
