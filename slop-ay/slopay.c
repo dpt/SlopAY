@@ -1096,10 +1096,15 @@ static void slopay_run_z80(slopay_loader_file_t *file,
               ? (song->song_data.song_length * effective_interrupt_rate) / 50
               : 0;
 
+  io.base_samples_per_frame = sample_rate / effective_interrupt_rate;
+  io.speed_percent = speed_percent;
+  io.samples_per_frame = (io.base_samples_per_frame * 100) / io.speed_percent;
+
   /* Apply -t cap if given, or use song length, or play indefinitely.
-   * -t is output time, so at -S 200 it covers twice as many song frames. */
+   * -t is output time, so at -S 200 it covers twice as many song frames.
+   * Use the real (rounded) samples per frame so the output is not short. */
   if (max_seconds > 0) {
-    const double cap_frames = (double)max_seconds * effective_interrupt_rate * speed_percent / 100.0;
+    const double cap_frames = ceil((double)max_seconds * sample_rate / io.samples_per_frame);
     const int cap = cap_frames < INT_MAX ? (int)cap_frames : INT_MAX - 1;
     frame_count = (frame_count > 0 && frame_count < cap) ? frame_count : cap;
   } else if (frame_count == 0) {
@@ -1128,9 +1133,6 @@ static void slopay_run_z80(slopay_loader_file_t *file,
   io.played_frames = 0;
   io.ay_clock_freq = profile->ay_clock_freq;
   io.frame_rate = effective_interrupt_rate;
-  io.base_samples_per_frame = sample_rate / effective_interrupt_rate;
-  io.speed_percent = speed_percent;
-  io.samples_per_frame = (io.base_samples_per_frame * 100) / io.speed_percent;
   io.samples_to_next_frame = io.samples_per_frame;
   io.base_z80_cycles_per_sample_fxp = (profile->z80_clock_freq << Z80_CYCLE_FXP) / sample_rate;
   io.z80_cycles_per_sample_fxp = (io.base_z80_cycles_per_sample_fxp * io.speed_percent) / 100;
