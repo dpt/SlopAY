@@ -89,10 +89,36 @@ static void test_master_volume_zero_mutes_output(void)
   slopay_chip_destroy(chip);
 }
 
+static void test_channel_mute(void)
+{
+  slopay_chip_t *chip = slopay_chip_create(1773450, 44100);
+  int i;
+
+  EXPECT(chip != NULL);
+  EXPECT(slopay_chip_channel_enabled(chip, 0));
+
+  slopay_chip_set_stereo_mode(chip, SLOPAY_CHIP_STEREO_MODE_MONO);
+  slopay_chip_write_register(chip, AY_REG_MIXER, AY_MIXER_ALL_OFF);
+  slopay_chip_write_register(chip, AY_REG_CHANNEL_A_VOLUME, 0x0F);
+  slopay_chip_enable_channel(chip, 0, 0);
+  EXPECT(!slopay_chip_channel_enabled(chip, 0));
+  EXPECT(slopay_chip_channel_enabled(chip, 1));
+
+  for (i = 0; i < 16; i++)
+    EXPECT(slopay_chip_get_sample(chip) == 0);
+
+  slopay_chip_enable_channel(chip, 0, 1);
+  EXPECT(slopay_chip_channel_enabled(chip, 0));
+  EXPECT(!slopay_chip_channel_enabled(chip, AY_CHANNELS));
+
+  slopay_chip_destroy(chip);
+}
+
 int main(void)
 {
   test_register_masking();
   test_volume_only_output_is_audible();
   test_master_volume_zero_mutes_output();
+  test_channel_mute();
   return 0;
 }

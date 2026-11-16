@@ -80,7 +80,7 @@ typedef struct {
 #ifdef SLOPAY_HAVE_MACOS_AUDIO
   slopay_target_macos_t     audio_driver;
 #endif
-  volatile sig_atomic_t     channel_enabled[SLOPAY_MIDI_CHANNELS]; /* 0-2 = AY A/B/C, 3 = beeper; live-toggled by 1/2/3/4 keys, read by the audio callback */
+  volatile sig_atomic_t     beeper_enabled; /* live-toggled by the 4 key, read by the audio callback; AY A/B/C mutes live in the chip */
   uint8_t                   selected_reg;
   unsigned                  total_out_count;
   unsigned                  ay_select_count;
@@ -375,7 +375,7 @@ static void slopay_set_speed(slopay_io_t *io, int percent)
  * 1/2/3/4 toggle AY channels A/B/C and the beeper.
  * +/- adjust playback speed, 0 resets it to 100%.
  * Call from the main thread only; the fields it writes (io's
- * channel_enabled/samples_per_frame and the AY chip's mute flags) are
+ * beeper_enabled/samples_per_frame and the AY chip's mute flags) are
  * volatile sig_atomic_t so the audio callback thread can read the
  * current value without tearing (project targets C99, no <stdatomic.h>). */
 static void slopay_handle_keys(slopay_io_t *io)
@@ -388,6 +388,7 @@ static void slopay_handle_keys(slopay_io_t *io)
   while (read(STDIN_FILENO, &c, 1) == 1) {
     static const char labels[SLOPAY_MIDI_CHANNELS] = { 'A', 'B', 'C', 'S' };
     int ch;
+    int enable;
 
     switch (c) {
     case '1': ch = 0; break;
@@ -406,11 +407,15 @@ static void slopay_handle_keys(slopay_io_t *io)
     default: continue;
     }
 
-    io->channel_enabled[ch] = !io->channel_enabled[ch];
-    if (ch < SLOPAY_MIDI_AY_CHANNELS)
-      slopay_chip_enable_channel(io->ay, ch, io->channel_enabled[ch]);
+    if (ch < SLOPAY_MIDI_AY_CHANNELS) {
+      enable = !slopay_chip_channel_enabled(io->ay, ch);
+      slopay_chip_enable_channel(io->ay, ch, enable);
+    } else {
+      enable = !io->beeper_enabled;
+      io->beeper_enabled = enable;
+    }
 
-    printf("Channel %c: %s\n", labels[ch], io->channel_enabled[ch] ? "on" : "off");
+    printf("Channel %c: %s\n", labels[ch], enable ? "on" : "off");
     fflush(stdout);
   }
 }
@@ -658,7 +663,7 @@ static void slopay_capture_midi_frame(slopay_io_t *io)
 
   delta_ticks = io->midi_ticks_since_event;
   for (int ch = 0; ch < SLOPAY_MIDI_AY_CHANNELS; ch++) {
-    const int new_note = io->channel_enabled[ch]
+    const int new_note = slopay_chip_channel_enabled(io->ay, ch)
                          ? slopay_ay_channel_midi_note(io->ay, io->ay_clock_freq, ch)
                          : -1;
     const int old_note = io->midi_notes[ch];
@@ -698,7 +703,7 @@ static void slopay_capture_midi_frame(slopay_io_t *io)
   {
     const unsigned toggles = io->beeper_toggle_count - io->midi_beeper_toggle_count_last;
     const double beeper_hz = (toggles > 0) ? ((double)toggles * io->frame_rate * 0.5) : 0.0;
-    const int new_note = io->channel_enabled[SLOPAY_MIDI_BEEPER_VOICE_INDEX]
+    const int new_note = io->beeper_enabled
                          ? slopay_freq_to_midi(beeper_hz)
                          : -1;
     const int old_note = io->midi_notes[SLOPAY_MIDI_BEEPER_VOICE_INDEX];
@@ -841,7 +846,7 @@ static void render_audio(void *userdata, float *output, uint32_t frames)
 
     /* Mix in ZX beeper level (captured from EAR bit on even-port OUT). */
     {
-      const int beeper_on = io->beeper_level && io->channel_enabled[SLOPAY_MIDI_BEEPER_VOICE_INDEX];
+      const int beeper_on = io->beeper_level && io->beeper_enabled;
       const float beeper_raw = beeper_on ? io->beeper_gain : 0.0f;
       const float beeper = slopay_dc_block(beeper_raw,
                                            &io->beeper_dc_prev_in,
@@ -1047,10 +1052,9 @@ static void slopay_run_z80(slopay_loader_file_t *file,
   }
   slopay_chip_set_volume(io.ay, volume_percent);
   for (int ch = 0; ch < AY_CHANNELS; ch++) {
-    io.channel_enabled[ch] = (channel_mask & (1u << ch)) != 0;
-    slopay_chip_enable_channel(io.ay, ch, io.channel_enabled[ch]);
+    slopay_chip_enable_channel(io.ay, ch, (channel_mask & (1u << ch)) != 0);
   }
-  io.channel_enabled[SLOPAY_MIDI_BEEPER_VOICE_INDEX] = 1;
+  io.beeper_enabled = 1;
   slopay_chip_set_stereo_mode(io.ay,
                               stereo_mode == SLOPAY_STEREO_MODE_MONO
                                 ? SLOPAY_CHIP_STEREO_MODE_MONO
