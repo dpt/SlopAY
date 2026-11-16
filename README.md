@@ -40,7 +40,7 @@ Shared shortcut conventions:
 ### SlopAY syntax
 
 ```text
-SlopAY [-V] [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-c <ABC>] [-P <machine>] [-I <50|300>] [-r <Hz>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] [-S <percent>] <ay_file>
+SlopAY [-V] [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-c <ABC>] [-P <machine>] [-I <50|300>] [-r <Hz>] [-p] [-s <song>] [-t <seconds>] [-w <file.wav>] [-M <file.mid>] [-B <channel>] [-S <percent>] [-R <ms>] [--reverb-mix <percent>] <ay_file>
 ```
 
 - `-v, --volume <percent>`: master output volume for AY + beeper (0-100, default 100)
@@ -58,6 +58,8 @@ SlopAY [-V] [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-c <ABC>] [-P
 - `-M, --midi <file.mid>`: export AY + beeper notes to MIDI (requires finite duration from song length or `-t`); in sequential mode this writes per-song files as `<name>-sN.ext`. MIDI is written in song time at normal tempo: `-S` is not applied, so `-S 200 -t 30 -M` exports 60 s of song
 - `-B, --midi-beeper-channel <0-15>`: MIDI channel used for beeper notes in `--midi` export (default `3`)
 - `-S, --speed <percent>`: initial playback speed (25-400, default `100`). AY pitch is unaffected; beeper pitch scales with speed, as beeper tones are timed by the Z80
+- `-R, --reverb <ms>`: reverb delay in milliseconds, using MIDIAY's delay-based reverb (0-1000, default `0` = off). Applies to live, WAV and headless output
+- `--reverb-mix <percent>`: reverb echo level (0-100, default `30`); `100` matches MIDIAY's level
 - `-V, --version`: show program version
 - `-h, --help`: show command help
 
@@ -67,7 +69,8 @@ Both AY unipolar output and beeper output are DC-blocked in the render path to r
 
 During live playback (speaker output, not `-w`/`-M` export), pressing `1` `2` `3` `4` toggles AY channels A, B, C and
 the beeper on/off respectively. Pressing `+`/`=` speeds playback up, `-`/`_` slows it down (25-400%, 10% steps), and
-`0` resets speed to 100%. This works on both the macOS real-time path and the headless render loop, and only when
+`0` resets speed to 100%. Pressing `r` cycles the reverb delay (off, 60, 125, 250, 500, 1000 ms) and `[`/`]`
+lower/raise the reverb mix (10% steps). This works on both the macOS real-time path and the headless render loop, and only when
 stdin is a terminal.
 
 Examples:

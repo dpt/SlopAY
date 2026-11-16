@@ -18,10 +18,12 @@ add_executable(SlopAY
   slop-ay/slopay-target-wave.c
   slop-ay/slopay.c
   slop-ay/slopz80.c
+  midi-ay/effects/reverb.c
 )
 
 target_include_directories(SlopAY PRIVATE
   "${CMAKE_SOURCE_DIR}/lib"
+  "${CMAKE_SOURCE_DIR}/midi-ay"
 )
 
 target_compile_definitions(SlopAY PRIVATE

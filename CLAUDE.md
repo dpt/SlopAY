@@ -63,7 +63,7 @@ There's no automated audio-correctness test; regression checks are manual, liste
   shape; a new output target should follow the same `init`/`start`/`stop`/`cleanup` lifecycle.
 - **Live playback control** — during real-time playback (not WAV/MIDI export), raw terminal input
   (`slopay_term_raw_enter`/`exit` in `slop-ay/slopay.c`, `<termios.h>`) lets `1`/`2`/`3`/`4` toggle AY channels
-  A/B/C and the beeper, and `+`/`-`/`0` adjust/reset playback speed — only active when stdin is a TTY. Playback
+  A/B/C and the beeper, and `+`/`-`/`0` adjust/reset playback speed, `r` cycles reverb delay and `[`/`]` adjust reverb mix — only active when stdin is a TTY. Playback
   speed scales `samples_per_frame` (real-time cadence between Z80 interrupt frames) and Z80 cycles per sample (so
   each frame keeps its full T-state budget), not the AY clock, so AY pitch is unaffected; beeper pitch, being
   Z80-timed, scales with speed.
