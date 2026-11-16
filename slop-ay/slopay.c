@@ -270,8 +270,8 @@ static void slopay_sigint_handler(int signum)
 }
 
 static struct termios slopay_orig_termios;
-static struct termios slopay_raw_termios;
-static int slopay_stdin_is_tty = 0;
+static volatile sig_atomic_t slopay_term_raw_active = 0; /* raw mode set by us; changed by the main thread and the SIGTSTP/SIGCONT handlers */
+static int slopay_live_keys = 0; /* stdin is a terminal, so live keys are wanted whenever we are in the foreground */
 
 /* A background job that touches the terminal gets SIGTTOU (tcsetattr) or
  * SIGTTIN (read) and is stopped, so only do so when in the foreground. */
@@ -280,54 +280,53 @@ static int slopay_term_is_foreground(void)
   return tcgetpgrp(STDIN_FILENO) == getpgrp();
 }
 
-/* Puts stdin into non-canonical, non-echo, non-blocking mode so single
- * keypresses can be polled during playback without waiting for Enter. */
+/* Saves the shell's terminal mode, then puts stdin into non-canonical,
+ * non-echo, non-blocking mode so single keypresses can be polled during
+ * playback. Does nothing in the background. Only async-signal-safe calls,
+ * as the SIGCONT handler uses it too. */
 static void slopay_term_raw_enter(void)
 {
-  slopay_stdin_is_tty = isatty(STDIN_FILENO) && slopay_term_is_foreground();
-  if (!slopay_stdin_is_tty)
+  struct termios raw;
+
+  if (slopay_term_raw_active || !slopay_term_is_foreground())
+    return;
+  if (tcgetattr(STDIN_FILENO, &slopay_orig_termios) != 0)
     return;
 
-  if (tcgetattr(STDIN_FILENO, &slopay_orig_termios) != 0) {
-    fprintf(stderr, "Warning: Failed to get terminal attributes; disabling live key input\n");
-    slopay_stdin_is_tty = 0;
-    return;
-  }
-
-  slopay_raw_termios = slopay_orig_termios;
-  slopay_raw_termios.c_lflag &= ~(ICANON | ECHO);
-  slopay_raw_termios.c_cc[VMIN] = 0;
-  slopay_raw_termios.c_cc[VTIME] = 0;
-  if (tcsetattr(STDIN_FILENO, TCSANOW, &slopay_raw_termios) != 0) {
-    fprintf(stderr, "Warning: Failed to set terminal attributes; disabling live key input\n");
-    slopay_stdin_is_tty = 0;
-  }
+  raw = slopay_orig_termios;
+  raw.c_lflag &= ~(ICANON | ECHO);
+  raw.c_cc[VMIN] = 0;
+  raw.c_cc[VTIME] = 0;
+  /* Set before tcsetattr so a SIGTSTP arriving in between restores the mode. */
+  slopay_term_raw_active = 1;
+  if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0)
+    slopay_term_raw_active = 0;
 }
 
 static void slopay_term_raw_exit(void)
 {
-  if (!slopay_stdin_is_tty || !slopay_term_is_foreground())
+  if (!slopay_term_raw_active || !slopay_term_is_foreground())
     return;
   tcsetattr(STDIN_FILENO, TCSANOW, &slopay_orig_termios);
+  slopay_term_raw_active = 0;
 }
 
 /* Ctrl+Z: restore the shell's terminal mode, then stop as normal. */
 static void slopay_tstp_handler(int signum)
 {
   (void)signum;
-  if (slopay_term_is_foreground())
-    tcsetattr(STDIN_FILENO, TCSANOW, &slopay_orig_termios);
+  slopay_term_raw_exit();
   signal(SIGTSTP, SIG_DFL);
   raise(SIGTSTP);
 }
 
-/* fg/bg: re-arm Ctrl+Z handling and, if in the foreground, raw mode. */
+/* fg/bg after Ctrl+Z: re-arm Ctrl+Z handling and, if now in the
+ * foreground, raw mode. */
 static void slopay_cont_handler(int signum)
 {
   (void)signum;
   signal(SIGTSTP, slopay_tstp_handler);
-  if (slopay_term_is_foreground())
-    tcsetattr(STDIN_FILENO, TCSANOW, &slopay_raw_termios);
+  slopay_term_raw_enter();
 }
 
 /* Enters live playback: SIGINT/SIGTERM/SIGQUIT request a clean stop so
@@ -339,12 +338,20 @@ static void slopay_live_begin(void)
   signal(SIGINT, slopay_sigint_handler);
   signal(SIGTERM, slopay_sigint_handler);
   signal(SIGQUIT, slopay_sigint_handler);
-  slopay_term_raw_enter();
-  if (!slopay_stdin_is_tty)
+  slopay_live_keys = isatty(STDIN_FILENO);
+  if (!slopay_live_keys)
     return;
 
+  /* Handlers go in first so an early Ctrl+Z cannot stop us in raw mode. */
   signal(SIGTSTP, slopay_tstp_handler);
   signal(SIGCONT, slopay_cont_handler);
+  slopay_term_raw_enter();
+  if (!slopay_term_raw_active && slopay_term_is_foreground()) {
+    fprintf(stderr, "Warning: Failed to set terminal attributes; disabling live key input\n");
+    slopay_live_keys = 0;
+    return;
+  }
+
   printf("Press 1/2/3/4 to toggle AY channels A/B/C and beeper, +/- to change speed, 0 to reset\n");
 }
 
@@ -384,7 +391,13 @@ static void slopay_handle_keys(slopay_io_t *io)
 {
   char c;
 
-  if (!slopay_stdin_is_tty || !slopay_term_is_foreground())
+  if (!slopay_live_keys || !slopay_term_is_foreground())
+    return;
+
+  /* A job started in the background and moved to the foreground with fg
+   * gets no SIGCONT if it was never stopped, so enter raw mode here. */
+  slopay_term_raw_enter();
+  if (!slopay_term_raw_active)
     return;
 
   while (read(STDIN_FILENO, &c, 1) == 1) {
