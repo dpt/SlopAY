@@ -74,6 +74,7 @@ slopay_chip_sample_t slopay_chip_get_sample(slopay_chip_t *ay);
 void slopay_chip_set_volume(slopay_chip_t *ay, int volume);
 void slopay_chip_set_stereo_mode(slopay_chip_t *ay, slopay_chip_stereo_mode_t mode);
 void slopay_chip_enable_channel(slopay_chip_t *ay, int channel, int enable); /* channel: 0=A 1=B 2=C */
+int slopay_chip_channel_enabled(const slopay_chip_t *ay, int channel);
 
 #ifdef __cplusplus
 }

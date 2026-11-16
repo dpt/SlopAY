@@ -453,6 +453,13 @@ void slopay_chip_enable_channel(slopay_chip_t *ay, int channel, int enable)
     ay->mute_flags |= (1u << channel);
 }
 
+int slopay_chip_channel_enabled(const slopay_chip_t *ay, int channel)
+{
+  if (channel < 0 || channel >= AY_CHANNELS)
+    return 0;
+  return (ay->mute_flags & (1u << channel)) == 0;
+}
+
 void slopay_chip_set_stereo_mode(slopay_chip_t *ay, slopay_chip_stereo_mode_t mode)
 {
   ay->mixer.stereo_mode = (mode > SLOPAY_CHIP_STEREO_MODE_ACB) ? SLOPAY_CHIP_STEREO_MODE_ABC : mode;

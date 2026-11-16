@@ -45,6 +45,7 @@
 #define SLOPAY_SPEED_MIN 25 /* Slowest playback speed, percent */
 #define SLOPAY_SPEED_MAX 400 /* Fastest playback speed, percent */
 #define SLOPAY_SPEED_STEP 10 /* Live +/- key adjustment step, percent */
+#define SLOPAY_STALL_POLLS 100 /* Wait-loop polls (~2 s) with no frame progress before giving up on the audio device */
 
 #ifndef SLOPAY_VERSION_STRING
 #define SLOPAY_VERSION_STRING "dev"
@@ -79,7 +80,7 @@ typedef struct {
 #ifdef SLOPAY_HAVE_MACOS_AUDIO
   slopay_target_macos_t     audio_driver;
 #endif
-  volatile sig_atomic_t     channel_enabled[SLOPAY_MIDI_CHANNELS]; /* 0-2 = AY A/B/C, 3 = beeper; live-toggled by 1/2/3/4 keys, read by the audio callback */
+  volatile sig_atomic_t     beeper_enabled; /* live-toggled by the 4 key, read by the audio callback; AY A/B/C mutes live in the chip */
   uint8_t                   selected_reg;
   unsigned                  total_out_count;
   unsigned                  ay_select_count;
@@ -105,9 +106,10 @@ typedef struct {
   volatile sig_atomic_t     samples_per_frame; /* live-adjusted by speed keys, read by the audio callback */
   int                       base_samples_per_frame; /* samples_per_frame at 100% speed */
   int                       speed_percent; /* live-adjusted with +/- and 0 keys; main thread only */
-  int                       z80_cycles_per_sample_fxp;
+  int                       base_z80_cycles_per_sample_fxp; /* z80_cycles_per_sample_fxp at 100% speed */
+  volatile sig_atomic_t     z80_cycles_per_sample_fxp; /* scaled with speed so each frame keeps its full T-state budget; read by the audio callback */
   int                       target_frames;
-  int                       played_frames;
+  volatile sig_atomic_t     played_frames; /* advanced by the audio callback, polled by the main thread */
   int                       samples_to_next_frame;
   int                       z80_cycle_error_fxp;
   slopay_machine_t          machine;
@@ -218,10 +220,12 @@ static int slopay_parse_stereo_mode(const char *text, slopay_stereo_mode_t *out_
 
 static int slopay_parse_channel_mask(const char *text, uint8_t *out_mask)
 {
-  uint8_t mask = 0;
+  uint8_t mask;
 
   if (text == NULL)
     return -1;
+
+  mask = 0;
 
   for (; *text != '\0'; text++) {
     switch (*text) {
@@ -266,39 +270,99 @@ static void slopay_sigint_handler(int signum)
 }
 
 static struct termios slopay_orig_termios;
-static int slopay_stdin_is_tty = 0;
+static volatile sig_atomic_t slopay_term_raw_active = 0; /* raw mode set by us; changed by the main thread and the SIGTSTP/SIGCONT handlers */
+static int slopay_live_keys = 0; /* stdin is a terminal, so live keys are wanted whenever we are in the foreground */
 
-/* Puts stdin into non-canonical, non-echo, non-blocking mode so single
- * keypresses can be polled during playback without waiting for Enter. */
+/* A background job that touches the terminal gets SIGTTOU (tcsetattr) or
+ * SIGTTIN (read) and is stopped, so only do so when in the foreground. */
+static int slopay_term_is_foreground(void)
+{
+  return tcgetpgrp(STDIN_FILENO) == getpgrp();
+}
+
+/* Saves the shell's terminal mode, then puts stdin into non-canonical,
+ * non-echo, non-blocking mode so single keypresses can be polled during
+ * playback. Does nothing in the background. Only async-signal-safe calls,
+ * as the SIGCONT handler uses it too. */
 static void slopay_term_raw_enter(void)
 {
   struct termios raw;
 
-  slopay_stdin_is_tty = isatty(STDIN_FILENO);
-  if (!slopay_stdin_is_tty)
+  if (slopay_term_raw_active || !slopay_term_is_foreground())
     return;
-
-  if (tcgetattr(STDIN_FILENO, &slopay_orig_termios) != 0) {
-    fprintf(stderr, "Warning: Failed to get terminal attributes; disabling live key input\n");
-    slopay_stdin_is_tty = 0;
+  if (tcgetattr(STDIN_FILENO, &slopay_orig_termios) != 0)
     return;
-  }
 
   raw = slopay_orig_termios;
   raw.c_lflag &= ~(ICANON | ECHO);
   raw.c_cc[VMIN] = 0;
   raw.c_cc[VTIME] = 0;
-  if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0) {
-    fprintf(stderr, "Warning: Failed to set terminal attributes; disabling live key input\n");
-    slopay_stdin_is_tty = 0;
-  }
+  /* Set before tcsetattr so a SIGTSTP arriving in between restores the mode. */
+  slopay_term_raw_active = 1;
+  if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0)
+    slopay_term_raw_active = 0;
 }
 
 static void slopay_term_raw_exit(void)
 {
-  if (!slopay_stdin_is_tty)
+  if (!slopay_term_raw_active || !slopay_term_is_foreground())
     return;
   tcsetattr(STDIN_FILENO, TCSANOW, &slopay_orig_termios);
+  slopay_term_raw_active = 0;
+}
+
+/* Ctrl+Z: restore the shell's terminal mode, then stop as normal. */
+static void slopay_tstp_handler(int signum)
+{
+  (void)signum;
+  slopay_term_raw_exit();
+  signal(SIGTSTP, SIG_DFL);
+  raise(SIGTSTP);
+}
+
+/* fg/bg after Ctrl+Z: re-arm Ctrl+Z handling and, if now in the
+ * foreground, raw mode. */
+static void slopay_cont_handler(int signum)
+{
+  (void)signum;
+  signal(SIGTSTP, slopay_tstp_handler);
+  slopay_term_raw_enter();
+}
+
+/* Enters live playback: SIGINT/SIGTERM/SIGQUIT request a clean stop so
+ * the terminal mode is always restored by slopay_live_end. A crash still
+ * leaves raw mode set. */
+static void slopay_live_begin(void)
+{
+  slopay_stop_requested = 0;
+  signal(SIGINT, slopay_sigint_handler);
+  signal(SIGTERM, slopay_sigint_handler);
+  signal(SIGQUIT, slopay_sigint_handler);
+  slopay_live_keys = isatty(STDIN_FILENO);
+  if (!slopay_live_keys)
+    return;
+
+  /* Handlers go in first so an early Ctrl+Z cannot stop us in raw mode. */
+  signal(SIGTSTP, slopay_tstp_handler);
+  signal(SIGCONT, slopay_cont_handler);
+  slopay_term_raw_enter();
+  if (!slopay_term_raw_active && slopay_term_is_foreground()) {
+    fprintf(stderr, "Warning: Failed to set terminal attributes; disabling live key input\n");
+    slopay_live_keys = 0;
+    return;
+  }
+
+  printf("Press 1/2/3/4 to toggle AY channels A/B/C and beeper, +/- to change speed, 0 to reset\n");
+}
+
+static void slopay_live_end(void)
+{
+  signal(SIGTSTP, SIG_DFL);
+  signal(SIGCONT, SIG_DFL);
+  slopay_term_raw_exit();
+  signal(SIGINT, SIG_DFL);
+  signal(SIGTERM, SIG_DFL);
+  signal(SIGQUIT, SIG_DFL);
 }
 
 static void slopay_set_speed(slopay_io_t *io, int percent)
@@ -310,6 +374,7 @@ static void slopay_set_speed(slopay_io_t *io, int percent)
 
   io->speed_percent = percent;
   io->samples_per_frame = (io->base_samples_per_frame * 100) / percent;
+  io->z80_cycles_per_sample_fxp = (io->base_z80_cycles_per_sample_fxp * percent) / 100;
 
   printf("Speed: %d%%\n", percent);
   fflush(stdout);
@@ -319,19 +384,26 @@ static void slopay_set_speed(slopay_io_t *io, int percent)
  * 1/2/3/4 toggle AY channels A/B/C and the beeper.
  * +/- adjust playback speed, 0 resets it to 100%.
  * Call from the main thread only; the fields it writes (io's
- * channel_enabled/samples_per_frame and the AY chip's mute flags) are
+ * beeper_enabled/samples_per_frame and the AY chip's mute flags) are
  * volatile sig_atomic_t so the audio callback thread can read the
  * current value without tearing (project targets C99, no <stdatomic.h>). */
 static void slopay_handle_keys(slopay_io_t *io)
 {
   char c;
 
-  if (!slopay_stdin_is_tty)
+  if (!slopay_live_keys || !slopay_term_is_foreground())
+    return;
+
+  /* A job started in the background and moved to the foreground with fg
+   * gets no SIGCONT if it was never stopped, so enter raw mode here. */
+  slopay_term_raw_enter();
+  if (!slopay_term_raw_active)
     return;
 
   while (read(STDIN_FILENO, &c, 1) == 1) {
     static const char labels[SLOPAY_MIDI_CHANNELS] = { 'A', 'B', 'C', 'S' };
     int ch;
+    int enable;
 
     switch (c) {
     case '1': ch = 0; break;
@@ -350,11 +422,15 @@ static void slopay_handle_keys(slopay_io_t *io)
     default: continue;
     }
 
-    io->channel_enabled[ch] = !io->channel_enabled[ch];
-    if (ch < SLOPAY_MIDI_AY_CHANNELS)
-      slopay_chip_enable_channel(io->ay, ch, io->channel_enabled[ch]);
+    if (ch < SLOPAY_MIDI_AY_CHANNELS) {
+      enable = !slopay_chip_channel_enabled(io->ay, ch);
+      slopay_chip_enable_channel(io->ay, ch, enable);
+    } else {
+      enable = !io->beeper_enabled;
+      io->beeper_enabled = enable;
+    }
 
-    printf("Channel %c: %s\n", labels[ch], io->channel_enabled[ch] ? "on" : "off");
+    printf("Channel %c: %s\n", labels[ch], enable ? "on" : "off");
     fflush(stdout);
   }
 }
@@ -381,19 +457,14 @@ static void slopay_render_headless(slopay_io_t *io)
   if (io == NULL)
     return;
 
-  slopay_stop_requested = 0;
-  signal(SIGINT, slopay_sigint_handler);
-  slopay_term_raw_enter();
-  if (slopay_stdin_is_tty)
-    printf("Press 1/2/3/4 to toggle AY channels A/B/C and beeper, +/- to change speed, 0 to reset\n");
+  slopay_live_begin();
 
   while (io->played_frames < io->target_frames && !slopay_stop_requested) {
     slopay_handle_keys(io);
     render_audio(io, scratch, 1024);
   }
 
-  slopay_term_raw_exit();
-  signal(SIGINT, SIG_DFL);
+  slopay_live_end();
 }
 #endif
 
@@ -607,7 +678,9 @@ static void slopay_capture_midi_frame(slopay_io_t *io)
 
   delta_ticks = io->midi_ticks_since_event;
   for (int ch = 0; ch < SLOPAY_MIDI_AY_CHANNELS; ch++) {
-    const int new_note = slopay_ay_channel_midi_note(io->ay, io->ay_clock_freq, ch);
+    const int new_note = slopay_chip_channel_enabled(io->ay, ch)
+                         ? slopay_ay_channel_midi_note(io->ay, io->ay_clock_freq, ch)
+                         : -1;
     const int old_note = io->midi_notes[ch];
 
     if (new_note == old_note)
@@ -645,7 +718,9 @@ static void slopay_capture_midi_frame(slopay_io_t *io)
   {
     const unsigned toggles = io->beeper_toggle_count - io->midi_beeper_toggle_count_last;
     const double beeper_hz = (toggles > 0) ? ((double)toggles * io->frame_rate * 0.5) : 0.0;
-    const int new_note = slopay_freq_to_midi(beeper_hz);
+    const int new_note = io->beeper_enabled
+                         ? slopay_freq_to_midi(beeper_hz)
+                         : -1;
     const int old_note = io->midi_notes[SLOPAY_MIDI_BEEPER_VOICE_INDEX];
 
     io->midi_beeper_toggle_count_last = io->beeper_toggle_count;
@@ -786,12 +861,12 @@ static void render_audio(void *userdata, float *output, uint32_t frames)
 
     /* Mix in ZX beeper level (captured from EAR bit on even-port OUT). */
     {
-      const float beeper_raw = (io->beeper_level && io->channel_enabled[SLOPAY_MIDI_BEEPER_VOICE_INDEX])
-                              ? io->beeper_gain : 0.0f;
+      const int beeper_on = io->beeper_level && io->beeper_enabled && io->beeper_gain > 0.0f;
+      const float beeper_raw = beeper_on ? io->beeper_gain : 0.0f;
       const float beeper = slopay_dc_block(beeper_raw,
                                            &io->beeper_dc_prev_in,
                                            &io->beeper_dc_prev_out);
-      const float ay_gain = (io->beeper_mix_mode == SLOPAY_BEEPER_MIX_DUCK && io->beeper_level)
+      const float ay_gain = (io->beeper_mix_mode == SLOPAY_BEEPER_MIX_DUCK && beeper_on)
                             ? SLOPAY_BEEPER_DUCK_AY_GAIN
                             : SLOPAY_BEEPER_ADD_AY_GAIN;
       out_l = slopay_clamp_unit(out_l * ay_gain + beeper);
@@ -963,9 +1038,12 @@ static void slopay_run_z80(slopay_loader_file_t *file,
   int effective_interrupt_rate;
   slopz80_t *cpu;
   slopay_io_t io;
+  int ch;
   int frame_count;
 #ifdef SLOPAY_HAVE_MACOS_AUDIO
   int audio_started = 0;
+  int last_played_frames;
+  int stalled_polls;
 #endif
 
   profile = slopay_machine_profile(machine);
@@ -989,11 +1067,10 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     return;
   }
   slopay_chip_set_volume(io.ay, volume_percent);
-  for (int ch = 0; ch < AY_CHANNELS; ch++) {
-    io.channel_enabled[ch] = (channel_mask & (1u << ch)) != 0;
-    slopay_chip_enable_channel(io.ay, ch, io.channel_enabled[ch]);
+  for (ch = 0; ch < AY_CHANNELS; ch++) {
+    slopay_chip_enable_channel(io.ay, ch, (channel_mask & (1u << ch)) != 0);
   }
-  io.channel_enabled[SLOPAY_MIDI_BEEPER_VOICE_INDEX] = 1;
+  io.beeper_enabled = 1;
   slopay_chip_set_stereo_mode(io.ay,
                               stereo_mode == SLOPAY_STEREO_MODE_MONO
                                 ? SLOPAY_CHIP_STEREO_MODE_MONO
@@ -1019,9 +1096,16 @@ static void slopay_run_z80(slopay_loader_file_t *file,
               ? (song->song_data.song_length * effective_interrupt_rate) / 50
               : 0;
 
-  /* Apply -t cap if given, or use song length, or play indefinitely. */
+  io.base_samples_per_frame = sample_rate / effective_interrupt_rate;
+  io.speed_percent = speed_percent;
+  io.samples_per_frame = (io.base_samples_per_frame * 100) / io.speed_percent;
+
+  /* Apply -t cap if given, or use song length, or play indefinitely.
+   * -t is output time, so at -S 200 it covers twice as many song frames.
+   * Use the real (rounded) samples per frame so the output is not short. */
   if (max_seconds > 0) {
-    const int cap = max_seconds * effective_interrupt_rate;
+    const double cap_frames = ceil((double)max_seconds * sample_rate / io.samples_per_frame);
+    const int cap = cap_frames < INT_MAX ? (int)cap_frames : INT_MAX - 1;
     frame_count = (frame_count > 0 && frame_count < cap) ? frame_count : cap;
   } else if (frame_count == 0) {
     frame_count = INT_MAX; /* infinite — play until Ctrl+C */
@@ -1049,11 +1133,9 @@ static void slopay_run_z80(slopay_loader_file_t *file,
   io.played_frames = 0;
   io.ay_clock_freq = profile->ay_clock_freq;
   io.frame_rate = effective_interrupt_rate;
-  io.base_samples_per_frame = sample_rate / effective_interrupt_rate;
-  io.speed_percent = speed_percent;
-  io.samples_per_frame = (io.base_samples_per_frame * 100) / io.speed_percent;
   io.samples_to_next_frame = io.samples_per_frame;
-  io.z80_cycles_per_sample_fxp = (profile->z80_clock_freq << Z80_CYCLE_FXP) / sample_rate;
+  io.base_z80_cycles_per_sample_fxp = (profile->z80_clock_freq << Z80_CYCLE_FXP) / sample_rate;
+  io.z80_cycles_per_sample_fxp = (io.base_z80_cycles_per_sample_fxp * io.speed_percent) / 100;
   io.z80_cycle_error_fxp = 0;
   /* Global volume (-v) scales both AY and beeper; -b remains relative beeper trim. */
   io.beeper_gain = ((float)beeper_volume_percent / 100.0f) *
@@ -1066,7 +1148,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
   io.cpc_psg_control = 0;
   io.cpc_ppi_port_a = 0;
   io.midi_ticks_since_event = 0;
-  for (int ch = 0; ch < SLOPAY_MIDI_CHANNELS; ch++)
+  for (ch = 0; ch < SLOPAY_MIDI_CHANNELS; ch++)
     io.midi_notes[ch] = -1;
   io.midi_beeper_toggle_count_last = 0;
   io.beeper_toggle_count_last = 0;
@@ -1100,7 +1182,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
 
      printf("Writing WAV: %s  (%d frames, %.1f s at %d Hz)\n",
             wav_filename, frame_count,
-            (double)frame_count / effective_interrupt_rate, sample_rate);
+            (double)total_samples / sample_rate, sample_rate);
 
     if (slopay_target_wave_render_all(&wav_driver, total_samples) < 0)
       fprintf(stderr, "Warning: WAV render incomplete\n");
@@ -1130,19 +1212,25 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     audio_started = 1;
 
     /* Emulation runs in the audio callback; this loop only waits. */
-    slopay_stop_requested = 0;
-    signal(SIGINT, slopay_sigint_handler);
-    slopay_term_raw_enter();
-    if (slopay_stdin_is_tty)
-      printf("Press 1/2/3/4 to toggle AY channels A/B/C and beeper, +/- to change speed, 0 to reset\n");
+    slopay_live_begin();
 
+    last_played_frames = -1;
+    stalled_polls = 0;
     while (io.played_frames < frame_count && !slopay_stop_requested) {
       slopay_handle_keys(&io);
       slopay_sleep_frame();
+
+      /* Give up if the callback stops firing (device unplugged, sleep). */
+      if (io.played_frames != last_played_frames) {
+        last_played_frames = io.played_frames;
+        stalled_polls = 0;
+      } else if (++stalled_polls >= SLOPAY_STALL_POLLS) {
+        fprintf(stderr, "Warning: Audio output stalled; stopping playback\n");
+        break;
+      }
     }
 
-    slopay_term_raw_exit();
-    signal(SIGINT, SIG_DFL);
+    slopay_live_end();
 
     slopay_target_macos_stop(&io.audio_driver);
     audio_started = 0;
@@ -1206,12 +1294,12 @@ static void print_usage(const char *prog)
   printf("  -p, --piano-roll                Print per-frame AY/Beeper notes during playback\n");
   printf("  -s, --song <song>               Song number to play (0-based)\n");
   printf("                                  (default: play songs sequentially from first song)\n");
-  printf("  -t, --time <seconds>            Maximum playback time in seconds\n");
+  printf("  -t, --time <seconds>            Maximum playback time in seconds (output time at -S speed)\n");
   printf("                                  (0 = use song length; default: song length or Ctrl+C)\n");
   printf("  -w, --wav <file.wav>            Write output to WAV instead of playing through speakers\n");
   printf("                                  (requires a finite duration: song length or -t/--time)\n");
   printf("                                  (sequential mode writes per-song files: <name>-sN.ext)\n");
-  printf("  -M, --midi <file.mid>           Export AY + beeper notes to MIDI (format 0)\n");
+  printf("  -M, --midi <file.mid>           Export AY + beeper notes to MIDI (format 0, song time; -S not applied)\n");
   printf("                                  (requires a finite duration: song length or -t/--time)\n");
   printf("                                  (sequential mode writes per-song files: <name>-sN.ext)\n");
   printf("  -B, --midi-beeper-channel <0-15> MIDI channel for beeper notes (default 3)\n");

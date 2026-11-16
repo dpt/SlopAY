@@ -53,11 +53,11 @@ SlopAY [-V] [-v <percent>] [-b <percent>] [-m <mode>] [-x <mode>] [-c <ABC>] [-P
 - `-r, --sample-rate <Hz>`: audio sample rate (8000-192000, default 44100)
 - `-p, --piano-roll`: print per-frame AY/Beeper notes
 - `-s, --song <song>`: 0-based song index from the AY file; if omitted, SlopAY plays songs sequentially starting from the file's first-song index
-- `-t, --time <seconds>`: max playback time (`0` uses song length)
+- `-t, --time <seconds>`: max playback time, measured as output time at the initial `-S` speed (`0` uses song length)
 - `-w, --wav <file.wav>`: write WAV instead of speaker output (requires finite duration from song length or `-t`); in sequential mode this writes per-song files as `<name>-sN.ext`
-- `-M, --midi <file.mid>`: export AY + beeper notes to MIDI (requires finite duration from song length or `-t`); in sequential mode this writes per-song files as `<name>-sN.ext`
+- `-M, --midi <file.mid>`: export AY + beeper notes to MIDI (requires finite duration from song length or `-t`); in sequential mode this writes per-song files as `<name>-sN.ext`. MIDI is written in song time at normal tempo: `-S` is not applied, so `-S 200 -t 30 -M` exports 60 s of song
 - `-B, --midi-beeper-channel <0-15>`: MIDI channel used for beeper notes in `--midi` export (default `3`)
-- `-S, --speed <percent>`: initial playback speed, tempo only (pitch unaffected) (25-400, default `100`)
+- `-S, --speed <percent>`: initial playback speed (25-400, default `100`). AY pitch is unaffected; beeper pitch scales with speed, as beeper tones are timed by the Z80
 - `-V, --version`: show program version
 - `-h, --help`: show command help
 
@@ -125,7 +125,7 @@ Intended use: Isolate a single AY channel for export.
 SlopAY -c B -t 30 -w out-channel-b.wav ProjectAY/Spectrum/Games/example.ay
 ```
 
-Intended use: Play back at double tempo without changing pitch.
+Intended use: Play back at double tempo without changing AY pitch.
 ```text
 SlopAY -S 200 ProjectAY/Spectrum/Demos/example.ay
 ```
