@@ -861,7 +861,7 @@ static void render_audio(void *userdata, float *output, uint32_t frames)
 
     /* Mix in ZX beeper level (captured from EAR bit on even-port OUT). */
     {
-      const int beeper_on = io->beeper_level && io->beeper_enabled;
+      const int beeper_on = io->beeper_level && io->beeper_enabled && io->beeper_gain > 0.0f;
       const float beeper_raw = beeper_on ? io->beeper_gain : 0.0f;
       const float beeper = slopay_dc_block(beeper_raw,
                                            &io->beeper_dc_prev_in,
