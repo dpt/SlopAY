@@ -268,6 +268,7 @@ static void slopay_sigint_handler(int signum)
 }
 
 static struct termios slopay_orig_termios;
+static struct termios slopay_raw_termios;
 static int slopay_stdin_is_tty = 0;
 
 /* A background job that touches the terminal gets SIGTTOU (tcsetattr) or
@@ -281,8 +282,6 @@ static int slopay_term_is_foreground(void)
  * keypresses can be polled during playback without waiting for Enter. */
 static void slopay_term_raw_enter(void)
 {
-  struct termios raw;
-
   slopay_stdin_is_tty = isatty(STDIN_FILENO) && slopay_term_is_foreground();
   if (!slopay_stdin_is_tty)
     return;
@@ -293,11 +292,11 @@ static void slopay_term_raw_enter(void)
     return;
   }
 
-  raw = slopay_orig_termios;
-  raw.c_lflag &= ~(ICANON | ECHO);
-  raw.c_cc[VMIN] = 0;
-  raw.c_cc[VTIME] = 0;
-  if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0) {
+  slopay_raw_termios = slopay_orig_termios;
+  slopay_raw_termios.c_lflag &= ~(ICANON | ECHO);
+  slopay_raw_termios.c_cc[VMIN] = 0;
+  slopay_raw_termios.c_cc[VTIME] = 0;
+  if (tcsetattr(STDIN_FILENO, TCSANOW, &slopay_raw_termios) != 0) {
     fprintf(stderr, "Warning: Failed to set terminal attributes; disabling live key input\n");
     slopay_stdin_is_tty = 0;
   }
@@ -308,6 +307,53 @@ static void slopay_term_raw_exit(void)
   if (!slopay_stdin_is_tty || !slopay_term_is_foreground())
     return;
   tcsetattr(STDIN_FILENO, TCSANOW, &slopay_orig_termios);
+}
+
+/* Ctrl+Z: restore the shell's terminal mode, then stop as normal. */
+static void slopay_tstp_handler(int signum)
+{
+  (void)signum;
+  if (slopay_term_is_foreground())
+    tcsetattr(STDIN_FILENO, TCSANOW, &slopay_orig_termios);
+  signal(SIGTSTP, SIG_DFL);
+  raise(SIGTSTP);
+}
+
+/* fg/bg: re-arm Ctrl+Z handling and, if in the foreground, raw mode. */
+static void slopay_cont_handler(int signum)
+{
+  (void)signum;
+  signal(SIGTSTP, slopay_tstp_handler);
+  if (slopay_term_is_foreground())
+    tcsetattr(STDIN_FILENO, TCSANOW, &slopay_raw_termios);
+}
+
+/* Enters live playback: SIGINT/SIGTERM/SIGQUIT request a clean stop so
+ * the terminal mode is always restored by slopay_live_end. A crash still
+ * leaves raw mode set. */
+static void slopay_live_begin(void)
+{
+  slopay_stop_requested = 0;
+  signal(SIGINT, slopay_sigint_handler);
+  signal(SIGTERM, slopay_sigint_handler);
+  signal(SIGQUIT, slopay_sigint_handler);
+  slopay_term_raw_enter();
+  if (!slopay_stdin_is_tty)
+    return;
+
+  signal(SIGTSTP, slopay_tstp_handler);
+  signal(SIGCONT, slopay_cont_handler);
+  printf("Press 1/2/3/4 to toggle AY channels A/B/C and beeper, +/- to change speed, 0 to reset\n");
+}
+
+static void slopay_live_end(void)
+{
+  signal(SIGTSTP, SIG_DFL);
+  signal(SIGCONT, SIG_DFL);
+  slopay_term_raw_exit();
+  signal(SIGINT, SIG_DFL);
+  signal(SIGTERM, SIG_DFL);
+  signal(SIGQUIT, SIG_DFL);
 }
 
 static void slopay_set_speed(slopay_io_t *io, int percent)
@@ -391,19 +437,14 @@ static void slopay_render_headless(slopay_io_t *io)
   if (io == NULL)
     return;
 
-  slopay_stop_requested = 0;
-  signal(SIGINT, slopay_sigint_handler);
-  slopay_term_raw_enter();
-  if (slopay_stdin_is_tty)
-    printf("Press 1/2/3/4 to toggle AY channels A/B/C and beeper, +/- to change speed, 0 to reset\n");
+  slopay_live_begin();
 
   while (io->played_frames < io->target_frames && !slopay_stop_requested) {
     slopay_handle_keys(io);
     render_audio(io, scratch, 1024);
   }
 
-  slopay_term_raw_exit();
-  signal(SIGINT, SIG_DFL);
+  slopay_live_end();
 }
 #endif
 
@@ -1149,11 +1190,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     audio_started = 1;
 
     /* Emulation runs in the audio callback; this loop only waits. */
-    slopay_stop_requested = 0;
-    signal(SIGINT, slopay_sigint_handler);
-    slopay_term_raw_enter();
-    if (slopay_stdin_is_tty)
-      printf("Press 1/2/3/4 to toggle AY channels A/B/C and beeper, +/- to change speed, 0 to reset\n");
+    slopay_live_begin();
 
     last_played_frames = -1;
     stalled_polls = 0;
@@ -1171,8 +1208,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
       }
     }
 
-    slopay_term_raw_exit();
-    signal(SIGINT, SIG_DFL);
+    slopay_live_end();
 
     slopay_target_macos_stop(&io.audio_driver);
     audio_started = 0;
