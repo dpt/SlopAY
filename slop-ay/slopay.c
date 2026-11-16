@@ -268,13 +268,20 @@ static void slopay_sigint_handler(int signum)
 static struct termios slopay_orig_termios;
 static int slopay_stdin_is_tty = 0;
 
+/* A background job that touches the terminal gets SIGTTOU (tcsetattr) or
+ * SIGTTIN (read) and is stopped, so only do so when in the foreground. */
+static int slopay_term_is_foreground(void)
+{
+  return tcgetpgrp(STDIN_FILENO) == getpgrp();
+}
+
 /* Puts stdin into non-canonical, non-echo, non-blocking mode so single
  * keypresses can be polled during playback without waiting for Enter. */
 static void slopay_term_raw_enter(void)
 {
   struct termios raw;
 
-  slopay_stdin_is_tty = isatty(STDIN_FILENO);
+  slopay_stdin_is_tty = isatty(STDIN_FILENO) && slopay_term_is_foreground();
   if (!slopay_stdin_is_tty)
     return;
 
@@ -296,7 +303,7 @@ static void slopay_term_raw_enter(void)
 
 static void slopay_term_raw_exit(void)
 {
-  if (!slopay_stdin_is_tty)
+  if (!slopay_stdin_is_tty || !slopay_term_is_foreground())
     return;
   tcsetattr(STDIN_FILENO, TCSANOW, &slopay_orig_termios);
 }
@@ -326,7 +333,7 @@ static void slopay_handle_keys(slopay_io_t *io)
 {
   char c;
 
-  if (!slopay_stdin_is_tty)
+  if (!slopay_stdin_is_tty || !slopay_term_is_foreground())
     return;
 
   while (read(STDIN_FILENO, &c, 1) == 1) {
