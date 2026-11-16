@@ -1299,7 +1299,7 @@ static void print_usage(const char *prog)
   printf("  -w, --wav <file.wav>            Write output to WAV instead of playing through speakers\n");
   printf("                                  (requires a finite duration: song length or -t/--time)\n");
   printf("                                  (sequential mode writes per-song files: <name>-sN.ext)\n");
-  printf("  -M, --midi <file.mid>           Export AY + beeper notes to MIDI (format 0)\n");
+  printf("  -M, --midi <file.mid>           Export AY + beeper notes to MIDI (format 0, song time; -S not applied)\n");
   printf("                                  (requires a finite duration: song length or -t/--time)\n");
   printf("                                  (sequential mode writes per-song files: <name>-sN.ext)\n");
   printf("  -B, --midi-beeper-channel <0-15> MIDI channel for beeper notes (default 3)\n");
