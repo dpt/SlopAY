@@ -1032,9 +1032,11 @@ static void slopay_run_z80(slopay_loader_file_t *file,
               ? (song->song_data.song_length * effective_interrupt_rate) / 50
               : 0;
 
-  /* Apply -t cap if given, or use song length, or play indefinitely. */
+  /* Apply -t cap if given, or use song length, or play indefinitely.
+   * -t is output time, so at -S 200 it covers twice as many song frames. */
   if (max_seconds > 0) {
-    const int cap = max_seconds * effective_interrupt_rate;
+    const double cap_frames = (double)max_seconds * effective_interrupt_rate * speed_percent / 100.0;
+    const int cap = cap_frames < INT_MAX ? (int)cap_frames : INT_MAX - 1;
     frame_count = (frame_count > 0 && frame_count < cap) ? frame_count : cap;
   } else if (frame_count == 0) {
     frame_count = INT_MAX; /* infinite — play until Ctrl+C */
@@ -1114,7 +1116,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
 
      printf("Writing WAV: %s  (%d frames, %.1f s at %d Hz)\n",
             wav_filename, frame_count,
-            (double)frame_count / effective_interrupt_rate, sample_rate);
+            (double)total_samples / sample_rate, sample_rate);
 
     if (slopay_target_wave_render_all(&wav_driver, total_samples) < 0)
       fprintf(stderr, "Warning: WAV render incomplete\n");
@@ -1220,7 +1222,7 @@ static void print_usage(const char *prog)
   printf("  -p, --piano-roll                Print per-frame AY/Beeper notes during playback\n");
   printf("  -s, --song <song>               Song number to play (0-based)\n");
   printf("                                  (default: play songs sequentially from first song)\n");
-  printf("  -t, --time <seconds>            Maximum playback time in seconds\n");
+  printf("  -t, --time <seconds>            Maximum playback time in seconds (output time at -S speed)\n");
   printf("                                  (0 = use song length; default: song length or Ctrl+C)\n");
   printf("  -w, --wav <file.wav>            Write output to WAV instead of playing through speakers\n");
   printf("                                  (requires a finite duration: song length or -t/--time)\n");
