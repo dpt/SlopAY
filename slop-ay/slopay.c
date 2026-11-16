@@ -220,10 +220,12 @@ static int slopay_parse_stereo_mode(const char *text, slopay_stereo_mode_t *out_
 
 static int slopay_parse_channel_mask(const char *text, uint8_t *out_mask)
 {
-  uint8_t mask = 0;
+  uint8_t mask;
 
   if (text == NULL)
     return -1;
+
+  mask = 0;
 
   for (; *text != '\0'; text++) {
     switch (*text) {
@@ -1023,6 +1025,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
   int effective_interrupt_rate;
   slopz80_t *cpu;
   slopay_io_t io;
+  int ch;
   int frame_count;
 #ifdef SLOPAY_HAVE_MACOS_AUDIO
   int audio_started = 0;
@@ -1051,7 +1054,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     return;
   }
   slopay_chip_set_volume(io.ay, volume_percent);
-  for (int ch = 0; ch < AY_CHANNELS; ch++) {
+  for (ch = 0; ch < AY_CHANNELS; ch++) {
     slopay_chip_enable_channel(io.ay, ch, (channel_mask & (1u << ch)) != 0);
   }
   io.beeper_enabled = 1;
@@ -1130,7 +1133,7 @@ static void slopay_run_z80(slopay_loader_file_t *file,
   io.cpc_psg_control = 0;
   io.cpc_ppi_port_a = 0;
   io.midi_ticks_since_event = 0;
-  for (int ch = 0; ch < SLOPAY_MIDI_CHANNELS; ch++)
+  for (ch = 0; ch < SLOPAY_MIDI_CHANNELS; ch++)
     io.midi_notes[ch] = -1;
   io.midi_beeper_toggle_count_last = 0;
   io.beeper_toggle_count_last = 0;
