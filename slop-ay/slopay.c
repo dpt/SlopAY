@@ -616,7 +616,9 @@ static void slopay_capture_midi_frame(slopay_io_t *io)
 
   delta_ticks = io->midi_ticks_since_event;
   for (int ch = 0; ch < SLOPAY_MIDI_AY_CHANNELS; ch++) {
-    const int new_note = slopay_ay_channel_midi_note(io->ay, io->ay_clock_freq, ch);
+    const int new_note = io->channel_enabled[ch]
+                         ? slopay_ay_channel_midi_note(io->ay, io->ay_clock_freq, ch)
+                         : -1;
     const int old_note = io->midi_notes[ch];
 
     if (new_note == old_note)
@@ -654,7 +656,9 @@ static void slopay_capture_midi_frame(slopay_io_t *io)
   {
     const unsigned toggles = io->beeper_toggle_count - io->midi_beeper_toggle_count_last;
     const double beeper_hz = (toggles > 0) ? ((double)toggles * io->frame_rate * 0.5) : 0.0;
-    const int new_note = slopay_freq_to_midi(beeper_hz);
+    const int new_note = io->channel_enabled[SLOPAY_MIDI_BEEPER_VOICE_INDEX]
+                         ? slopay_freq_to_midi(beeper_hz)
+                         : -1;
     const int old_note = io->midi_notes[SLOPAY_MIDI_BEEPER_VOICE_INDEX];
 
     io->midi_beeper_toggle_count_last = io->beeper_toggle_count;
