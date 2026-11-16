@@ -45,6 +45,7 @@
 #define SLOPAY_SPEED_MIN 25 /* Slowest playback speed, percent */
 #define SLOPAY_SPEED_MAX 400 /* Fastest playback speed, percent */
 #define SLOPAY_SPEED_STEP 10 /* Live +/- key adjustment step, percent */
+#define SLOPAY_STALL_POLLS 100 /* Wait-loop polls (~2 s) with no frame progress before giving up on the audio device */
 
 #ifndef SLOPAY_VERSION_STRING
 #define SLOPAY_VERSION_STRING "dev"
@@ -108,7 +109,7 @@ typedef struct {
   int                       base_z80_cycles_per_sample_fxp; /* z80_cycles_per_sample_fxp at 100% speed */
   volatile sig_atomic_t     z80_cycles_per_sample_fxp; /* scaled with speed so each frame keeps its full T-state budget; read by the audio callback */
   int                       target_frames;
-  int                       played_frames;
+  volatile sig_atomic_t     played_frames; /* advanced by the audio callback, polled by the main thread */
   int                       samples_to_next_frame;
   int                       z80_cycle_error_fxp;
   slopay_machine_t          machine;
@@ -979,6 +980,8 @@ static void slopay_run_z80(slopay_loader_file_t *file,
   int frame_count;
 #ifdef SLOPAY_HAVE_MACOS_AUDIO
   int audio_started = 0;
+  int last_played_frames;
+  int stalled_polls;
 #endif
 
   profile = slopay_machine_profile(machine);
@@ -1152,9 +1155,20 @@ static void slopay_run_z80(slopay_loader_file_t *file,
     if (slopay_stdin_is_tty)
       printf("Press 1/2/3/4 to toggle AY channels A/B/C and beeper, +/- to change speed, 0 to reset\n");
 
+    last_played_frames = -1;
+    stalled_polls = 0;
     while (io.played_frames < frame_count && !slopay_stop_requested) {
       slopay_handle_keys(&io);
       slopay_sleep_frame();
+
+      /* Give up if the callback stops firing (device unplugged, sleep). */
+      if (io.played_frames != last_played_frames) {
+        last_played_frames = io.played_frames;
+        stalled_polls = 0;
+      } else if (++stalled_polls >= SLOPAY_STALL_POLLS) {
+        fprintf(stderr, "Warning: Audio output stalled; stopping playback\n");
+        break;
+      }
     }
 
     slopay_term_raw_exit();
